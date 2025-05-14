@@ -13,8 +13,9 @@ fn log_info(message: []const u8) void {
 const KEY_SPACE: u32 = 32;
 // Add other key codes your input handler might specifically track or provide helpers for.
 
-var g_last_mouse_x: f32 = -1.0;
-var g_last_mouse_y: f32 = -1.0;
+var g_last_mouse_x: f32 = 0.0; // Initialize to 0, will be set properly on first update
+var g_last_mouse_y: f32 = 0.0;
+var g_first_update: bool = true;
 
 // --- Public API for Input Handler ---
 
@@ -26,11 +27,18 @@ pub fn update() void {
 
     // 2. Handler-specific logic (e.g., logging, derived states)
     const mouse_pos = webinput.get_mouse_position();
-    if (mouse_pos.x != g_last_mouse_x or mouse_pos.y != g_last_mouse_y) {
-        log_info("[InputHandler] Mouse moved.");
+    if (g_first_update) {
         g_last_mouse_x = mouse_pos.x;
         g_last_mouse_y = mouse_pos.y;
-        // In a real app, you might set a flag here: g_mouse_moved_this_frame = true;
+        g_first_update = false;
+        // Optional: log initial mouse position if desired
+        // log_info("[InputHandler] Initial mouse position set.");
+    } else {
+        if (mouse_pos.x != g_last_mouse_x or mouse_pos.y != g_last_mouse_y) {
+            log_info("[InputHandler] Mouse moved.");
+            g_last_mouse_x = mouse_pos.x;
+            g_last_mouse_y = mouse_pos.y;
+        }
     }
 
     if (webinput.was_mouse_button_just_pressed(0)) { // Left mouse button
