@@ -55,14 +55,15 @@ async function initWasm() {
             webinput_glue.setupInputSystem(wasmInstance.exports, 'zigCanvas'); // ASSUMES canvas with id="zigCanvas"
             console.log("WebInput system initialized.");
         } else {
-            console.error("setupInputSystem not found in webinput_glue. Check js/webinput.js export.");
+            console.error("setupInputSystem not found in webinput_glue. Ensure js/webinput.js exports it.");
         }
 
-        if (wasmInstance.exports.main) {
-            wasmInstance.exports.main();
-            console.log("WASM module 'main' function called.");
+        // Call the exported '_start' function from the Zig WASM module
+        if (wasmInstance.exports._start) {
+            wasmInstance.exports._start();
+            console.log("WASM module '_start' function called.");
         } else {
-            console.error("WASM module does not export a 'main' function.");
+            console.error("WASM module does not export an '_start' function. Check Zig export.");
         }
 
         // Start the animation loop to call update_frame continuously
