@@ -3,118 +3,141 @@
 let wasmExports = null;
 let canvas = null;
 
+// Flags to prevent spamming console with errors if Wasm exports are missing
+let mouseMoveErrorLogged = false;
+let mouseButtonErrorLogged = false;
+let mouseWheelErrorLogged = false;
+let keyEventErrorLogged = false;
+
 // --- Core Input System Setup ---
 
 /**
  * Initializes the input system by setting up event listeners for mouse and keyboard.
+ * Must be called after the Wasm module is instantiated.
  * @param {object} instanceExports The `exports` object from the instantiated Wasm module.
  * @param {HTMLCanvasElement|string} canvasElementOrId The canvas element or its ID for mouse events.
  */
 export function setupInputSystem(instanceExports, canvasElementOrId) {
     if (!instanceExports) {
-        console.error("[WebInput.js] Wasm exports not provided to setupInputSystem.");
+        console.error("[WebInput.js] Wasm exports not provided to setupInputSystem. Input system will not work.");
         return;
     }
     wasmExports = instanceExports;
 
     if (typeof canvasElementOrId === 'string') {
         canvas = document.getElementById(canvasElementOrId);
-    } else {
+    } else if (canvasElementOrId instanceof HTMLCanvasElement) {
         canvas = canvasElementOrId;
+    } else {
+        console.error("[WebInput.js] Invalid canvasElementOrId provided. Must be an ID string or an HTMLCanvasElement. Mouse input will not be available.");
+        canvas = null; // Ensure canvas is null if invalid
     }
 
     if (!canvas) {
-        console.warn("[WebInput.js] Canvas element is NULL after setup. Mouse input will not be available. ID used was:", canvasElementOrId);
+        console.warn("[WebInput.js] Canvas element not found or invalid. Mouse input will not be available. Canvas ID/element was:", canvasElementOrId);
     }
 
     _setupMouseListeners();
     _setupKeyListeners();
 
-    console.log("[WebInput.js] System initialized for mouse and keyboard.");
+    console.log("[WebInput.js] Input system initialized.");
 }
 
 // --- Event Listener Setup ---
 
 function _setupMouseListeners() {
     if (!canvas) {
-        console.warn("[WebInput.js TEMP] _setupMouseListeners: No canvas object, skipping mouse listeners.");
+        // Warning already logged in setupInputSystem if canvas is essential
         return;
     }
-    console.log("[WebInput.js TEMP] _setupMouseListeners: Valid canvas found. Attaching mouse listeners...");
 
     canvas.addEventListener('mousemove', (event) => {
         if (wasmExports && wasmExports.zig_internal_on_mouse_move) {
             const rect = canvas.getBoundingClientRect();
             wasmExports.zig_internal_on_mouse_move(event.clientX - rect.left, event.clientY - rect.top);
-        } else {
-            if (!this.mouseMoveErrorLogged) {
-                console.error("[WebInput.js TEMP] zig_internal_on_mouse_move NOT available or wasmExports error. Exports:", wasmExports);
-                this.mouseMoveErrorLogged = true;
-            }
+        } else if (!mouseMoveErrorLogged) {
+            console.error("[WebInput.js] Wasm export 'zig_internal_on_mouse_move' not found.");
+            mouseMoveErrorLogged = true;
         }
     });
 
-    console.log("[WebInput.js TEMP] Attaching mousedown listener (simplified)...");
     canvas.addEventListener('mousedown', (event) => {
-        console.log("[WebInput.js TEMP] SIMPLIFIED JS mousedown CALLBACK FIRED! Button:", event.button);
+        if (wasmExports && wasmExports.zig_internal_on_mouse_button) {
+            const rect = canvas.getBoundingClientRect();
+            // event.button: 0 for left, 1 for middle, 2 for right
+            wasmExports.zig_internal_on_mouse_button(event.button, true, event.clientX - rect.left, event.clientY - rect.top);
+        } else if (!mouseButtonErrorLogged) {
+            console.error("[WebInput.js] Wasm export 'zig_internal_on_mouse_button' not found (for mousedown).");
+            mouseButtonErrorLogged = true;
+        }
     });
 
     canvas.addEventListener('mouseup', (event) => {
-        console.log("[WebInput.js TEMP] JS mouseup. Button:", event.button);
         if (wasmExports && wasmExports.zig_internal_on_mouse_button) {
             const rect = canvas.getBoundingClientRect();
             wasmExports.zig_internal_on_mouse_button(event.button, false, event.clientX - rect.left, event.clientY - rect.top);
-        } else {
-            if (!this.mouseUpErrorLogged) {
-                console.error("[WebInput.js TEMP] zig_internal_on_mouse_button (mouseup) NOT available or wasmExports error. Exports:", wasmExports);
-                this.mouseUpErrorLogged = true;
-            }
+        } else if (!mouseButtonErrorLogged) { // Use the same flag as mousedown
+            console.error("[WebInput.js] Wasm export 'zig_internal_on_mouse_button' not found (for mouseup).");
+            mouseButtonErrorLogged = true;
         }
     });
 
     canvas.addEventListener('wheel', (event) => {
-        console.log("[WebInput.js TEMP] JS wheel. DeltaY:", event.deltaY);
         if (wasmExports && wasmExports.zig_internal_on_mouse_wheel) {
-            event.preventDefault();
+            event.preventDefault(); // Prevent page scrolling
             let deltaX = event.deltaX;
             let deltaY = event.deltaY;
-            if (event.deltaMode === 1) { deltaX *= 16; deltaY *= 16;} 
-            else if (event.deltaMode === 2) { deltaX *= (canvas.width || window.innerWidth) * 0.8; deltaY *= (canvas.height || window.innerHeight) * 0.8; }
-            wasmExports.zig_internal_on_mouse_wheel(deltaX, deltaY);
-        } else {
-            if (!this.mouseWheelErrorLogged) {
-                console.error("[WebInput.js TEMP] zig_internal_on_mouse_wheel NOT available or wasmExports error. Exports:", wasmExports);
-                this.mouseWheelErrorLogged = true;
+
+            // Normalize delta values based on deltaMode
+            // DOM_DELTA_PIXEL: 0 (default) - The delta values are specified in pixels.
+            // DOM_DELTA_LINE: 1 - The delta values are specified in lines.
+            // DOM_DELTA_PAGE: 2 - The delta values are specified in pages.
+            // Heuristic values for line/page scrolling, can be adjusted.
+            const LINE_HEIGHT = 16; // Approximate pixels per line
+            const PAGE_FACTOR = 0.8; // Factor of canvas dimension
+
+            if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+                deltaX *= LINE_HEIGHT;
+                deltaY *= LINE_HEIGHT;
+            } else if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+                deltaX *= (canvas.width || window.innerWidth) * PAGE_FACTOR;
+                deltaY *= (canvas.height || window.innerHeight) * PAGE_FACTOR;
             }
+            wasmExports.zig_internal_on_mouse_wheel(deltaX, deltaY);
+        } else if (!mouseWheelErrorLogged) {
+            console.error("[WebInput.js] Wasm export 'zig_internal_on_mouse_wheel' not found.");
+            mouseWheelErrorLogged = true;
         }
     });
-    console.log("[WebInput.js TEMP] All mouse listeners attached (or attempted). BoundingRect:", canvas.getBoundingClientRect());
+
+    // Disable context menu on right-click on the canvas for better game-like experience
+    canvas.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+    });
 }
 
 function _setupKeyListeners() {
+    // Key events are typically global
     window.addEventListener('keydown', (event) => {
         if (wasmExports && wasmExports.zig_internal_on_key_event) {
-            wasmExports.zig_internal_on_key_event(event.keyCode, true);
-        } else {
-            if (!this.keyDownErrorLogged) {
-                console.error("[WebInput.js TEMP] zig_internal_on_key_event NOT available or wasmExports error. Exports:", wasmExports);
-                this.keyDownErrorLogged = true;
-            }
+            // Using event.keyCode for simplicity as planned.
+            // Note: event.keyCode is deprecated, event.code is preferred for new development
+            // but requires mapping strings to key codes on the Zig side if used directly.
+            wasmExports.zig_internal_on_key_event(event.keyCode, true); // true for is_down
+        } else if (!keyEventErrorLogged) {
+            console.error("[WebInput.js] Wasm export 'zig_internal_on_key_event' not found (for keydown).");
+            keyEventErrorLogged = true;
         }
     });
 
     window.addEventListener('keyup', (event) => {
         if (wasmExports && wasmExports.zig_internal_on_key_event) {
-            wasmExports.zig_internal_on_key_event(event.keyCode, false);
-        } else {
-            if (!this.keyUpErrorLogged) {
-                console.error("[WebInput.js TEMP] zig_internal_on_key_event (keyup) NOT available or wasmExports error. Exports:", wasmExports);
-                this.keyUpErrorLogged = true;
-            }
+            wasmExports.zig_internal_on_key_event(event.keyCode, false); // false for is_down
+        } else if (!keyEventErrorLogged) { // Use the same flag as keydown
+            console.error("[WebInput.js] Wasm export 'zig_internal_on_key_event' not found (for keyup).");
+            keyEventErrorLogged = true;
         }
     });
 }
 
-// Gamepad related code (constants, cache, FFI functions) has been removed.
-// For future gamepad integration, the FFI functions (platform_poll_gamepads, etc.)
-// would be implemented here.
+// Gamepad related code and old comments/FFI stubs have been removed.

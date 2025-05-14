@@ -5,16 +5,28 @@ const input_handler = @import("input_handler.zig");
 // or it could be removed if all logging is delegated.
 extern "env" fn js_log_string(message_ptr: [*c]const u8, message_len: u32) void;
 
-// Helper function to log strings from Zig
-fn log_info(message: []const u8) void {
-    js_log_string(message.ptr, @intCast(message.len));
+// Helper function to log strings from Zig (application-level)
+fn log_main_app_info(message: []const u8) void {
+    // Simple prefix for now, avoiding std.fmt for freestanding
+    const prefix = "[MainApp] ";
+    var buffer: [128]u8 = undefined;
+    var i: usize = 0;
+    while (i < prefix.len and i < buffer.len) : (i += 1) {
+        buffer[i] = prefix[i];
+    }
+    var j: usize = 0;
+    while (j < message.len and (i + j) < buffer.len - 1) : (j += 1) {
+        buffer[i + j] = message[j];
+    }
+    const final_len = i + j;
+    js_log_string(&buffer, @intCast(final_len));
 }
 
 // This is the main entry point called by the Wasm runtime/JS after instantiation.
 // It replaces the previous `pub fn main() void` for JS interaction.
 pub export fn _start() void {
-    log_info("[Main] _start() called. Initializing application.");
-    // If input_handler had an init function, it would be called here:
+    log_main_app_info("_start() called. Application initialized.");
+    // If input_handler had an explicit init function, it could be called here:
     // input_handler.init();
 }
 
@@ -24,23 +36,25 @@ pub export fn update_frame() void {
     input_handler.update();
 
     // 2. Application logic using the input handler's state
-    if (input_handler.was_mouse_button_just_pressed(0)) { // Left mouse button
+
+    // Check for left mouse button click (using the specific helper from input_handler)
+    if (input_handler.was_left_mouse_button_just_pressed()) {
         const mouse_pos = input_handler.get_current_mouse_position();
-        // Log that a click happened and we read the mouse position.
-        // Actual coordinates would need f32-to-string or FFI for js_log_f32_pair.
-        log_info("[Main] Left click detected via input_handler. Mouse position captured.");
-        // To use mouse_pos.x, mouse_pos.y, you'd pass them to an FFI logger or format them.
-        // For now, this access is enough to satisfy the linter that mouse_pos is used.
-        _ = mouse_pos; // Explicitly acknowledge use if direct logging isn't done here.
+        // For logging mouse_pos.x and .y, we would need a f32 to string conversion
+        // or an FFI function to log f32 pairs. For now, just log the event.
+        log_main_app_info("Left mouse button clicked!");
+        // Acknowledge use of mouse_pos to prevent unused variable warnings if not logging coordinates.
+        _ = mouse_pos;
     }
 
+    // Check for spacebar press (using the specific helper from input_handler)
     if (input_handler.was_space_just_pressed()) {
-        log_info("[Main] Spacebar was just pressed (detected via input_handler)!");
+        log_main_app_info("Spacebar was just pressed!");
     }
 
-    // Example of checking continuous key down state from input_handler
-    // if (input_handler.is_key_down(input_handler.KEY_SPACE)) { // Assuming KEY_SPACE is exposed or use literal 32
-    //     log_info("[Main] Spacebar is being held (polled from input_handler).");
+    // Example: Continuous check for a key being held down (e.g., 'C' key - keyCode 67)
+    // if (input_handler.is_key_down(67)) { // 67 is 'C'
+    //     log_main_app_info("'C' key is being held down.");
     // }
 }
 
