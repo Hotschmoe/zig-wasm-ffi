@@ -67,7 +67,7 @@ pub fn build(b: *std.Build) !void {
     // --- API GLUE FILE MANAGEMENT ---
     // Define which APIs from zig-wasm-ffi are being used by this example project.
     const used_web_apis = [_][]const u8{
-        "webaudio",
+        // "webaudio",
         "webinput",
         // "webgpu", // Uncomment if using WebGPU API from zig-wasm-ffi
     };
