@@ -37,8 +37,8 @@ var g_first_update_cycle: bool = true;
 /// Call this once per frame, typically at the beginning of the main application update.
 /// It updates the underlying webinput state and can perform handler-specific logic.
 pub fn update() void {
-    // 1. Update the core input state from the webinput library module
-    webinput.update_input_frame_start();
+    // 1. Begin frame state update (resets accumulators in webinput)
+    webinput.begin_input_frame_state_update();
 
     // 2. Handler-specific logic (e.g., logging, derived states for the application)
     const current_mouse_pos = webinput.get_mouse_position();
@@ -68,6 +68,9 @@ pub fn update() void {
     if (was_space_just_pressed()) { // Using self-defined helper
         log_app_info("Spacebar just pressed!");
     }
+
+    // 3. End frame state update (snapshots current input state to previous state in webinput)
+    webinput.end_input_frame_state_update();
 }
 
 /// Optional: if the input handler itself needed specific one-time setup.
