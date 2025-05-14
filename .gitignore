@@ -1,0 +1,56 @@
+# Compiled Object files
+*.o
+*.obj
+*.o.d
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+*.ipa
+
+# Debug files
+*.dSYM/
+*.dwo/
+*.dwp/
+*.pdb
+
+# Zig cache directory
+**/.zig-cache/
+**/.zig-out/
+.zig-cache/
+.zig-out/
+dist/
+
+# Build manifests
+# build.zig.zon
+
+# Local ZLS data
+.zls*
+zls.json
+
+# Common editor files
+.vscode/
+.idea/
+*.swp
+*~
+.#*

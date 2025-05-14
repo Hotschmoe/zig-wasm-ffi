@@ -1,0 +1,17 @@
+// zig-wasm-ffi/build.zig.zon
+.{
+    .name = .zig_wasm_ffi,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.14.0",
+    .dependencies = .{},
+    .paths = .{
+        "src",
+        "js",
+        "build.zig",
+        "build.zig.zon",
+        "README.md",
+        "LICENSE",
+    },
+    .fingerprint = 0xbf5c3819ee44029f,
+    // TODO: Add fingerprint field here. Run 'zig build' and the compiler will provide the suggested value.
+}
