@@ -13,5 +13,4 @@
         "LICENSE",
     },
     .fingerprint = 0xbf5c3819ee44029f,
-    // TODO: Add fingerprint field here. Run 'zig build' and the compiler will provide the suggested value.
 }
