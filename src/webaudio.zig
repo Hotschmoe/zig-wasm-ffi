@@ -1,5 +1,5 @@
 // zig-wasm-ffi/src/webaudio.zig
-const std = @import("std");
+// const std = @import("std"); // Removed std
 
 // Opaque types for JavaScript objects
 pub const AudioContext = opaque {};

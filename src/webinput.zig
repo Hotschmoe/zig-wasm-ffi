@@ -1,5 +1,5 @@
 // zig-wasm-ffi/src/webinput.zig
-const std = @import("std");
+// const std = @import("std");
 
 // Opaque type for JavaScript objects
 // pub const Gamepad = opaque {};
