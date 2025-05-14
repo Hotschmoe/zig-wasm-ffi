@@ -32,23 +32,23 @@
 // TEMPORARY DIAGNOSTIC LOGS ADDED - REMOVE AFTER DEBUGGING
 
 // FFI import for JavaScript's console.log (TEMPORARY for debugging)
-extern "env" fn js_log_string(message_ptr: [*c]const u8, message_len: u32) void;
+// extern "env" fn js_log_string(message_ptr: [*c]const u8, message_len: u32) void;
 
 // Helper function to log strings from Zig (TEMPORARY for debugging)
-fn log_lib_debug(message: []const u8) void {
-    const prefix = "[WebInputLib ZIG DBG] ";
-    var buffer: [128]u8 = undefined;
-    var i: usize = 0;
-    while (i < prefix.len and i < buffer.len) : (i += 1) {
-        buffer[i] = prefix[i];
-    }
-    var j: usize = 0;
-    while (j < message.len and (i + j) < buffer.len - 1) : (j += 1) {
-        buffer[i + j] = message[j];
-    }
-    const final_len = i + j;
-    js_log_string(&buffer, @intCast(final_len));
-}
+// fn log_lib_debug(message: []const u8) void {
+//     const prefix = "[WebInputLib ZIG DBG] ";
+//     var buffer: [128]u8 = undefined;
+//     var i: usize = 0;
+//     while (i < prefix.len and i < buffer.len) : (i += 1) {
+//         buffer[i] = prefix[i];
+//     }
+//     var j: usize = 0;
+//     while (j < message.len and (i + j) < buffer.len - 1) : (j += 1) {
+//         buffer[i + j] = message[j];
+//     }
+//     const final_len = i + j;
+//     js_log_string(&buffer, @intCast(final_len));
+// }
 
 // --- Configuration ---
 const MAX_KEY_CODES: usize = 256;
@@ -77,7 +77,6 @@ var g_keyboard_state: KeyboardState = .{};
 /// Called by JavaScript when the mouse moves.
 /// Coordinates are relative to the canvas.
 pub export fn zig_internal_on_mouse_move(x: f32, y: f32) void {
-    // log_lib_debug("on_mouse_move called"); // TEMP - uncomment if needed
     g_mouse_state.x = x;
     g_mouse_state.y = y;
 }
@@ -85,17 +84,7 @@ pub export fn zig_internal_on_mouse_move(x: f32, y: f32) void {
 /// Called by JavaScript on mouse button press or release.
 /// Coordinates are relative to the canvas.
 pub export fn zig_internal_on_mouse_button(button_code: u32, is_down: bool, x: f32, y: f32) void {
-    // TEMP LOG to see if this function is reached and with what values
-    if (button_code == 0) { // Only log for left mouse button to reduce noise
-        if (is_down) {
-            log_lib_debug("on_mouse_button: LEFT DOWN");
-        } else {
-            log_lib_debug("on_mouse_button: LEFT UP");
-        }
-    }
-    // End TEMP LOG
-
-    g_mouse_state.x = x; // Update position on click/release too
+    g_mouse_state.x = x;
     g_mouse_state.y = y;
     if (button_code < MAX_MOUSE_BUTTONS) {
         g_mouse_state.buttons_down[button_code] = is_down;
@@ -105,17 +94,12 @@ pub export fn zig_internal_on_mouse_button(button_code: u32, is_down: bool, x: f
 /// Called by JavaScript on mouse wheel scroll.
 /// Deltas are normalized pixel values.
 pub export fn zig_internal_on_mouse_wheel(delta_x: f32, delta_y: f32) void {
-    // log_lib_debug("on_mouse_wheel called"); // TEMP - uncomment if needed
     g_mouse_state.wheel_delta_x += delta_x;
     g_mouse_state.wheel_delta_y += delta_y;
 }
 
 /// Called by JavaScript on key press or release.
 pub export fn zig_internal_on_key_event(key_code: u32, is_down: bool) void {
-    // if (key_code == 32) { // TEMP LOG for spacebar
-    //     if (is_down) { log_lib_debug("on_key_event: SPACE DOWN"); }
-    //     else { log_lib_debug("on_key_event: SPACE UP"); }
-    // }
     if (key_code < MAX_KEY_CODES) {
         g_keyboard_state.keys_down[key_code] = is_down;
     }
@@ -127,9 +111,8 @@ pub export fn zig_internal_on_key_event(key_code: u32, is_down: bool) void {
 /// It resets per-frame accumulators (e.g., mouse wheel delta).
 /// The crucial update of previous button/key states is now done in `end_input_frame_state_update`.
 pub fn begin_input_frame_state_update() void {
-    g_mouse_state.wheel_delta_x = 0.0; // Reset accumulated wheel delta
+    g_mouse_state.wheel_delta_x = 0.0;
     g_mouse_state.wheel_delta_y = 0.0;
-    // Note: prev_buttons_down and prev_keys_down are NOT updated here anymore.
 }
 
 /// Call this at the END of your application's per-frame input processing sequence,
@@ -164,21 +147,6 @@ pub fn was_mouse_button_just_pressed(button_code: u32) bool {
     if (button_code < MAX_MOUSE_BUTTONS) {
         const current_state = g_mouse_state.buttons_down[button_code];
         const prev_state = g_mouse_state.prev_buttons_down[button_code];
-
-        if (button_code == 0) { // Log only for left button to reduce noise
-            if (current_state) {
-                log_lib_debug("was_pressed(0) check: current=TRUE");
-            } else {
-                log_lib_debug("was_pressed(0) check: current=FALSE");
-            }
-
-            if (prev_state) {
-                log_lib_debug("was_pressed(0) check: prev=TRUE");
-            } else {
-                log_lib_debug("was_pressed(0) check: prev=FALSE");
-            }
-        }
-
         return current_state and !prev_state;
     }
     return false;

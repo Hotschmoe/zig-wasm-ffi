@@ -40,7 +40,7 @@ export function setupInputSystem(instanceExports, canvasElementOrId) {
     _setupMouseListeners();
     _setupKeyListeners();
 
-    console.log("[WebInput.js] Input system initialized. Canvas element:", canvas);
+    console.log("[WebInput.js] Input system initialized.");
 }
 
 // --- Event Listener Setup ---
@@ -52,10 +52,8 @@ function _setupMouseListeners() {
     }
 
     canvas.addEventListener('mousemove', (event) => {
-        // console.log("[WebInput.js TEMP] mousemove event fired"); // TEMP LOG - uncomment if needed
         if (wasmExports && wasmExports.zig_internal_on_mouse_move) {
             const rect = canvas.getBoundingClientRect();
-            // console.log("[WebInput.js TEMP] Calling zig_internal_on_mouse_move"); // TEMP LOG - uncomment if needed
             wasmExports.zig_internal_on_mouse_move(event.clientX - rect.left, event.clientY - rect.top);
         } else if (!mouseMoveErrorLogged) {
             console.error("[WebInput.js] Wasm export 'zig_internal_on_mouse_move' not found.");
@@ -64,10 +62,8 @@ function _setupMouseListeners() {
     });
 
     canvas.addEventListener('mousedown', (event) => {
-        console.log("[WebInput.js TEMP] mousedown event fired. Button:", event.button);
         if (wasmExports && wasmExports.zig_internal_on_mouse_button) {
             const rect = canvas.getBoundingClientRect();
-            console.log("[WebInput.js TEMP] Calling zig_internal_on_mouse_button (down)");
             wasmExports.zig_internal_on_mouse_button(event.button, true, event.clientX - rect.left, event.clientY - rect.top);
         } else if (!mouseButtonErrorLogged) {
             console.error("[WebInput.js] Wasm export 'zig_internal_on_mouse_button' not found (for mousedown).");
@@ -76,10 +72,8 @@ function _setupMouseListeners() {
     });
 
     canvas.addEventListener('mouseup', (event) => {
-        console.log("[WebInput.js TEMP] mouseup event fired. Button:", event.button);
         if (wasmExports && wasmExports.zig_internal_on_mouse_button) {
             const rect = canvas.getBoundingClientRect();
-            console.log("[WebInput.js TEMP] Calling zig_internal_on_mouse_button (up)");
             wasmExports.zig_internal_on_mouse_button(event.button, false, event.clientX - rect.left, event.clientY - rect.top);
         } else if (!mouseButtonErrorLogged) {
             console.error("[WebInput.js] Wasm export 'zig_internal_on_mouse_button' not found (for mouseup).");
@@ -88,7 +82,6 @@ function _setupMouseListeners() {
     });
 
     canvas.addEventListener('wheel', (event) => {
-        // console.log("[WebInput.js TEMP] wheel event fired"); // TEMP LOG - uncomment if needed
         if (wasmExports && wasmExports.zig_internal_on_mouse_wheel) {
             event.preventDefault(); // Prevent page scrolling
             let deltaX = event.deltaX;
@@ -109,7 +102,6 @@ function _setupMouseListeners() {
                 deltaX *= (canvas.width || window.innerWidth) * PAGE_FACTOR;
                 deltaY *= (canvas.height || window.innerHeight) * PAGE_FACTOR;
             }
-            // console.log("[WebInput.js TEMP] Calling zig_internal_on_mouse_wheel"); // TEMP LOG - uncomment if needed
             wasmExports.zig_internal_on_mouse_wheel(deltaX, deltaY);
         } else if (!mouseWheelErrorLogged) {
             console.error("[WebInput.js] Wasm export 'zig_internal_on_mouse_wheel' not found.");
@@ -126,9 +118,7 @@ function _setupMouseListeners() {
 function _setupKeyListeners() {
     // Key events are typically global
     window.addEventListener('keydown', (event) => {
-        // console.log("[WebInput.js TEMP] keydown event fired. KeyCode:", event.keyCode); // TEMP LOG - uncomment if needed
         if (wasmExports && wasmExports.zig_internal_on_key_event) {
-            // console.log("[WebInput.js TEMP] Calling zig_internal_on_key_event (down)"); // TEMP LOG - uncomment if needed
             wasmExports.zig_internal_on_key_event(event.keyCode, true); // true for is_down
         } else if (!keyEventErrorLogged) {
             console.error("[WebInput.js] Wasm export 'zig_internal_on_key_event' not found (for keydown).");
@@ -137,9 +127,7 @@ function _setupKeyListeners() {
     });
 
     window.addEventListener('keyup', (event) => {
-        // console.log("[WebInput.js TEMP] keyup event fired. KeyCode:", event.keyCode); // TEMP LOG - uncomment if needed
         if (wasmExports && wasmExports.zig_internal_on_key_event) {
-            // console.log("[WebInput.js TEMP] Calling zig_internal_on_key_event (up)"); // TEMP LOG - uncomment if needed
             wasmExports.zig_internal_on_key_event(event.keyCode, false); // false for is_down
         } else if (!keyEventErrorLogged) {
             console.error("[WebInput.js] Wasm export 'zig_internal_on_key_event' not found (for keyup).");
