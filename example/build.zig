@@ -37,6 +37,7 @@ pub fn build(b: *std.Build) void {
     // Important WASM-specific settings
     exe.rdynamic = true;
     exe.entry = .disabled;
+    exe.export_memory = true;
 
     // Install in the output directory
     b.installArtifact(exe);

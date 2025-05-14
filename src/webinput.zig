@@ -5,11 +5,11 @@
 // pub const Gamepad = opaque {};
 
 // FFI declarations for JavaScript glue
-const js = @import("webinput.js");
-extern fn js_addKeyListener(event: [*:0]const u8, callback: *const fn (*anyopaque, bool, u32) callconv(.C) void, context_ptr: *anyopaque) void;
-// extern fn js_getGamepads() ?*[*]?*Gamepad;
-// extern fn js_getGamepadButton(gamepad: *Gamepad, index: u32) bool;
-// extern fn js_getGamepadAxis(gamepad: *Gamepad, index: u32) f64;
+// const js = @import("webinput.js"); // REMOVED - JS functions will be provided as WASM imports
+pub extern "env" fn js_addKeyListener(event: [*:0]const u8, callback: *const fn (*anyopaque, bool, u32) callconv(.C) void, context_ptr: *anyopaque) void;
+// pub extern "env" fn js_getGamepads() ?*[*]?*Gamepad;
+// pub extern "env" fn js_getGamepadButton(gamepad: *Gamepad, index: u32) bool;
+// pub extern "env" fn js_getGamepadAxis(gamepad: *Gamepad, index: u32) f64;
 
 // const MAX_GAMEPADS = 4; // Maximum number of gamepads expected from the JS API
 

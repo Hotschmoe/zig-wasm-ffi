@@ -7,16 +7,16 @@ pub const AudioBuffer = opaque {};
 pub const AudioBufferSourceNode = opaque {};
 
 // FFI declarations for JavaScript glue
-const js = @import("webaudio.js");
-extern fn js_createAudioContext() ?*AudioContext;
-extern fn js_decodeAudioData(context: *AudioContext, data: [*]const u8, len: usize, callback: *const fn (*anyopaque, ?*AudioBuffer) callconv(.C) void, context_ptr: *anyopaque) void;
-extern fn js_createBufferSource(context: *AudioContext) ?*AudioBufferSourceNode;
-extern fn js_setBuffer(source: *AudioBufferSourceNode, buffer: *AudioBuffer) void;
-extern fn js_startSource(source: *AudioBufferSourceNode) void;
+// const js = @import("webaudio.js"); // REMOVED - JS functions will be provided as WASM imports
+pub extern "env" fn js_createAudioContext() ?*AudioContext;
+pub extern "env" fn js_decodeAudioData(context: *AudioContext, data: [*]const u8, len: usize, callback: *const fn (*anyopaque, ?*AudioBuffer) callconv(.C) void, context_ptr: *anyopaque) void;
+pub extern "env" fn js_createBufferSource(context: *AudioContext) ?*AudioBufferSourceNode;
+pub extern "env" fn js_setBuffer(source: *AudioBufferSourceNode, buffer: *AudioBuffer) void;
+pub extern "env" fn js_startSource(source: *AudioBufferSourceNode) void;
 
 // Binding functions
-pub fn createAudioContext() !*AudioContext {
-    return js_createAudioContext() orelse return error.AudioContextCreationFailed;
+pub fn createAudioContext() ?*AudioContext {
+    return js_createAudioContext();
 }
 
 pub fn decodeAudioData(context: *AudioContext, data: []const u8, comptime Callback: type, callback_context: *Callback) void {

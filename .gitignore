@@ -41,6 +41,9 @@
 .zig-out/
 dist/
 
+# Local Archive and Examples
+archive/
+
 # Build manifests
 # build.zig.zon
 
