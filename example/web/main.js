@@ -11,12 +11,13 @@ import * as webinput_glue from './webinput.js';
 let wasmInstance = null; // To hold the Wasm instance for access by js_log_string and animation loop
 
 async function initWasm() {
+    console.log("[Main.js] initWasm() called."); // TEMP LOG
     const importObject = {
         env: {
             // Function for Zig to log strings to the browser console
             js_log_string: (messagePtr, messageLen) => {
                 if (!wasmInstance) {
-                    console.error("js_log_string called before Wasm instance is available.");
+                    console.error("[Main.js] js_log_string called before Wasm instance is available."); // MODIFIED LOG
                     return;
                 }
                 try {
@@ -26,7 +27,7 @@ async function initWasm() {
                     const message = textDecoder.decode(messageBytes);
                     console.log("Zig:", message);
                 } catch (e) {
-                    console.error("Error in js_log_string:", e);
+                    console.error("[Main.js] Error in js_log_string:", e); // MODIFIED LOG
                 }
             },
             // Spread all functions from the imported glue modules.
@@ -42,28 +43,30 @@ async function initWasm() {
         // 'app.wasm' is expected to be in the same directory (dist/) as this main.js
         const response = await fetch('app.wasm');
         if (!response.ok) {
-            throw new Error(`Failed to fetch app.wasm: ${response.status} ${response.statusText}`);
+            throw new Error(`[Main.js] Failed to fetch app.wasm: ${response.status} ${response.statusText}`);
         }
         
         const { instance } = await WebAssembly.instantiateStreaming(response, importObject);
         wasmInstance = instance; // Store the instance
+        console.log("[Main.js] Wasm module instantiated."); // TEMP LOG
         
         // Initialize the webinput system after Wasm is instantiated
         // Ensure you have a canvas element in your HTML, e.g., <canvas id="zigCanvas"></canvas>
         // Pass the Wasm instance's exports and the canvas ID (or element) to setupInputSystem.
         if (webinput_glue.setupInputSystem) {
+            console.log("[Main.js] Calling setupInputSystem..."); // TEMP LOG
             webinput_glue.setupInputSystem(wasmInstance.exports, 'zigCanvas'); // ASSUMES canvas with id="zigCanvas"
-            console.log("WebInput system initialized.");
+            // console.log("[Main.js] WebInput system initialized by main.js."); // Covered by webinput.js log
         } else {
-            console.error("setupInputSystem not found in webinput_glue. Ensure js/webinput.js exports it.");
+            console.error("[Main.js] setupInputSystem not found in webinput_glue. Ensure js/webinput.js exports it.");
         }
 
         // Call the exported '_start' function from the Zig WASM module
         if (wasmInstance.exports._start) {
             wasmInstance.exports._start();
-            console.log("WASM module '_start' function called.");
+            console.log("[Main.js] WASM module '_start' function called."); // MODIFIED LOG
         } else {
-            console.error("WASM module does not export an '_start' function. Check Zig export.");
+            console.error("[Main.js] WASM module does not export an '_start' function. Check Zig export."); // MODIFIED LOG
         }
 
         // Start the animation loop to call update_frame continuously
@@ -72,7 +75,7 @@ async function initWasm() {
                 try {
                     wasmInstance.exports.update_frame();
                 } catch (e) {
-                    console.error("Error in Wasm update_frame:", e);
+                    console.error("[Main.js] Error in Wasm update_frame:", e); // MODIFIED LOG
                     // Optionally, stop the loop if update_frame errors out consistently
                     // requestAnimationFrame = () => {}; // Stop the loop by no-oping rAF
                     return; 
@@ -81,10 +84,10 @@ async function initWasm() {
             requestAnimationFrame(animationLoop);
         }
         requestAnimationFrame(animationLoop);
-        console.log("Animation loop started for update_frame.");
+        console.log("[Main.js] Animation loop started for update_frame."); // MODIFIED LOG
 
     } catch (e) {
-        console.error("Error loading or instantiating WASM:", e);
+        console.error("[Main.js] Error loading or instantiating WASM:", e); // MODIFIED LOG
         // Provide a simple visual error indication on the page for easier debugging
         const errorParagraph = document.createElement('p');
         errorParagraph.textContent = `Failed to load WASM module: ${e.message}. Check the console for more details.`;
@@ -93,5 +96,8 @@ async function initWasm() {
     }
 }
 
-// Run the WASM initialization
-initWasm();
+// Defer initWasm until the DOM is fully loaded
+document.addEventListener('DOMContentLoaded', () => {
+    console.log("[Main.js] DOMContentLoaded event fired. Running initWasm()."); // TEMP LOG
+    initWasm();
+});

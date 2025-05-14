@@ -6,7 +6,7 @@
 
 // FFI declarations for JavaScript glue
 // const js = @import("webinput.js"); // REMOVED - JS functions will be provided as WASM imports
-pub extern "env" fn js_addKeyListener(event: [*:0]const u8, callback: *const fn (*anyopaque, bool, u32) callconv(.C) void, context_ptr: *anyopaque) void;
+// pub extern "env" fn js_addKeyListener(event: [*:0]const u8, callback: *const fn (*anyopaque, bool, u32) callconv(.C) void, context_ptr: *anyopaque) void;
 // pub extern "env" fn js_getGamepads() ?*[*]?*Gamepad;
 // pub extern "env" fn js_getGamepadButton(gamepad: *Gamepad, index: u32) bool;
 // pub extern "env" fn js_getGamepadAxis(gamepad: *Gamepad, index: u32) f64;
@@ -14,36 +14,36 @@ pub extern "env" fn js_addKeyListener(event: [*:0]const u8, callback: *const fn 
 // const MAX_GAMEPADS = 4; // Maximum number of gamepads expected from the JS API
 
 // Binding functions
-pub fn addKeyListener(event: [:0]const u8, comptime Callback: type, callback_context: *Callback) void {
-    js_addKeyListener(event.ptr, Callback.callback, callback_context);
-}
+// pub fn addKeyListener(event: [:0]const u8, comptime Callback: type, callback_context: *Callback) void {
+//     js_addKeyListener(event.ptr, Callback.callback, callback_context);
+// }
 
 // Example callback struct for key events
-pub const KeyCallback = struct {
-    pressed: bool = false,
-    key_code: u32 = 0,
-    pub fn callback(ctx: *anyopaque, pressed: bool, key_code: u32) callconv(.C) void {
-        const self: *KeyCallback = @ptrCast(@alignCast(ctx));
-        self.pressed = pressed;
-        self.key_code = key_code;
-    }
-};
+// pub const KeyCallback = struct {
+//     pressed: bool = false,
+//     key_code: u32 = 0,
+//     pub fn callback(ctx: *anyopaque, pressed: bool, key_code: u32) callconv(.C) void {
+//         const self: *KeyCallback = @ptrCast(@alignCast(ctx));
+//         self.pressed = pressed;
+//         self.key_code = key_code;
+//     }
+// };
 
 // TEMPORARY DIAGNOSTIC LOGS ADDED - REMOVE AFTER DEBUGGING
 
 // FFI import for JavaScript's console.log, used for temporary debugging
 // Assumes the main JS environment (e.g., example/web/main.js) provides this.
-extern "env" fn js_log_string(message_ptr: [*c]const u8, message_len: u32) void;
+// extern "env" fn js_log_string(message_ptr: [*c]const u8, message_len: u32) void;
 
 // Helper for temporary logging
-fn log_temp(message: []const u8) void {
-    // In a real scenario, prefix with module name for clarity
-    // const prefix = "[webinput.zig TEMP] ";
-    // var prefixed_message_buf: [100]u8 = undefined; // Adjust size as needed
-    // const final_message = std.fmt.bufPrint(&prefixed_message_buf, "{s}{s}", .{prefix, message}) catch message;
-    // js_log_string(final_message.ptr, @intCast(final_message.len));
-    js_log_string(message.ptr, @intCast(message.len)); // Simplified for now
-}
+// fn log_temp(message: []const u8) void {
+//     // In a real scenario, prefix with module name for clarity
+//     // const prefix = "[webinput.zig TEMP] ";
+//     // var prefixed_message_buf: [100]u8 = undefined; // Adjust size as needed
+//     // const final_message = std.fmt.bufPrint(&prefixed_message_buf, "{s}{s}", .{prefix, message}) catch message;
+//     // js_log_string(final_message.ptr, @intCast(final_message.len));
+//     js_log_string(message.ptr, @intCast(message.len)); // Simplified for now
+// }
 
 // --- Configuration ---
 const MAX_KEY_CODES: usize = 256;
@@ -70,13 +70,13 @@ var g_keyboard_state: KeyboardState = .{};
 // --- Exported Zig functions for JavaScript to call (Input Callbacks) ---
 
 pub export fn zig_internal_on_mouse_move(x: f32, y: f32) void {
-    log_temp("zig_internal_on_mouse_move called."); // TEMP LOG (add params if needed)
+    // log_temp("zig_internal_on_mouse_move called."); // TEMP LOG REMOVED
     g_mouse_state.x = x;
     g_mouse_state.y = y;
 }
 
 pub export fn zig_internal_on_mouse_button(button_code: u32, is_down: bool, x: f32, y: f32) void {
-    log_temp("zig_internal_on_mouse_button called."); // TEMP LOG
+    // log_temp("zig_internal_on_mouse_button called."); // TEMP LOG REMOVED
     g_mouse_state.x = x;
     g_mouse_state.y = y;
     if (button_code < MAX_MOUSE_BUTTONS) {
@@ -85,13 +85,13 @@ pub export fn zig_internal_on_mouse_button(button_code: u32, is_down: bool, x: f
 }
 
 pub export fn zig_internal_on_mouse_wheel(delta_x: f32, delta_y: f32) void {
-    log_temp("zig_internal_on_mouse_wheel called."); // TEMP LOG
+    // log_temp("zig_internal_on_mouse_wheel called."); // TEMP LOG REMOVED
     g_mouse_state.wheel_delta_x += delta_x;
     g_mouse_state.wheel_delta_y += delta_y;
 }
 
 pub export fn zig_internal_on_key_event(key_code: u32, is_down: bool) void {
-    log_temp("zig_internal_on_key_event called."); // TEMP LOG
+    // log_temp("zig_internal_on_key_event called."); // TEMP LOG REMOVED
     if (key_code < MAX_KEY_CODES) {
         g_keyboard_state.keys_down[key_code] = is_down;
     }

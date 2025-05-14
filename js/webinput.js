@@ -11,7 +11,6 @@ let canvas = null;
  * @param {HTMLCanvasElement|string} canvasElementOrId The canvas element or its ID for mouse events.
  */
 export function setupInputSystem(instanceExports, canvasElementOrId) {
-    // console.log("[WebInput.js TEMP] setupInputSystem called. Exports:", instanceExports); // TEMP LOG
     if (!instanceExports) {
         console.error("[WebInput.js] Wasm exports not provided to setupInputSystem.");
         return;
@@ -25,7 +24,7 @@ export function setupInputSystem(instanceExports, canvasElementOrId) {
     }
 
     if (!canvas) {
-        console.warn("[WebInput.js] Canvas element not found or provided (", canvasElementOrId, "). Mouse input will not be available."); // MODIFIED LOG
+        console.warn("[WebInput.js] Canvas element is NULL after setup. Mouse input will not be available. ID used was:", canvasElementOrId);
     }
 
     _setupMouseListeners();
@@ -38,48 +37,44 @@ export function setupInputSystem(instanceExports, canvasElementOrId) {
 
 function _setupMouseListeners() {
     if (!canvas) {
-        // console.log("[WebInput.js TEMP] _setupMouseListeners: No canvas, skipping mouse listeners."); // TEMP LOG
+        console.warn("[WebInput.js TEMP] _setupMouseListeners: No canvas object, skipping mouse listeners.");
         return;
     }
-    // console.log("[WebInput.js TEMP] _setupMouseListeners: Setting up mouse listeners for canvas:", canvas); // TEMP LOG
+    console.log("[WebInput.js TEMP] _setupMouseListeners: Valid canvas found. Attaching mouse listeners...");
 
     canvas.addEventListener('mousemove', (event) => {
-        console.log("[WebInput.js TEMP] JS mousemove. ClientX:", event.clientX, "ClientY:", event.clientY); // TEMP LOG
         if (wasmExports && wasmExports.zig_internal_on_mouse_move) {
-            // console.log("[WebInput.js TEMP] zig_internal_on_mouse_move IS available. Calling."); // TEMP LOG
             const rect = canvas.getBoundingClientRect();
             wasmExports.zig_internal_on_mouse_move(event.clientX - rect.left, event.clientY - rect.top);
         } else {
-            console.error("[WebInput.js TEMP] zig_internal_on_mouse_move NOT available or wasmExports error. Exports:", wasmExports); // TEMP LOG
+            if (!this.mouseMoveErrorLogged) {
+                console.error("[WebInput.js TEMP] zig_internal_on_mouse_move NOT available or wasmExports error. Exports:", wasmExports);
+                this.mouseMoveErrorLogged = true;
+            }
         }
     });
 
+    console.log("[WebInput.js TEMP] Attaching mousedown listener (simplified)...");
     canvas.addEventListener('mousedown', (event) => {
-        console.log("[WebInput.js TEMP] JS mousedown. Button:", event.button); // TEMP LOG
-        if (wasmExports && wasmExports.zig_internal_on_mouse_button) {
-            // console.log("[WebInput.js TEMP] zig_internal_on_mouse_button IS available. Calling."); // TEMP LOG
-            const rect = canvas.getBoundingClientRect();
-            wasmExports.zig_internal_on_mouse_button(event.button, true, event.clientX - rect.left, event.clientY - rect.top);
-        } else {
-            console.error("[WebInput.js TEMP] zig_internal_on_mouse_button NOT available or wasmExports error. Exports:", wasmExports); // TEMP LOG
-        }
+        console.log("[WebInput.js TEMP] SIMPLIFIED JS mousedown CALLBACK FIRED! Button:", event.button);
     });
 
     canvas.addEventListener('mouseup', (event) => {
-        console.log("[WebInput.js TEMP] JS mouseup. Button:", event.button); // TEMP LOG
+        console.log("[WebInput.js TEMP] JS mouseup. Button:", event.button);
         if (wasmExports && wasmExports.zig_internal_on_mouse_button) {
-            // console.log("[WebInput.js TEMP] zig_internal_on_mouse_button (mouseup) IS available. Calling."); // TEMP LOG
             const rect = canvas.getBoundingClientRect();
             wasmExports.zig_internal_on_mouse_button(event.button, false, event.clientX - rect.left, event.clientY - rect.top);
         } else {
-            console.error("[WebInput.js TEMP] zig_internal_on_mouse_button (mouseup) NOT available or wasmExports error. Exports:", wasmExports); // TEMP LOG
+            if (!this.mouseUpErrorLogged) {
+                console.error("[WebInput.js TEMP] zig_internal_on_mouse_button (mouseup) NOT available or wasmExports error. Exports:", wasmExports);
+                this.mouseUpErrorLogged = true;
+            }
         }
     });
 
     canvas.addEventListener('wheel', (event) => {
-        console.log("[WebInput.js TEMP] JS wheel. DeltaY:", event.deltaY); // TEMP LOG
+        console.log("[WebInput.js TEMP] JS wheel. DeltaY:", event.deltaY);
         if (wasmExports && wasmExports.zig_internal_on_mouse_wheel) {
-            // console.log("[WebInput.js TEMP] zig_internal_on_mouse_wheel IS available. Calling."); // TEMP LOG
             event.preventDefault();
             let deltaX = event.deltaX;
             let deltaY = event.deltaY;
@@ -87,36 +82,35 @@ function _setupMouseListeners() {
             else if (event.deltaMode === 2) { deltaX *= (canvas.width || window.innerWidth) * 0.8; deltaY *= (canvas.height || window.innerHeight) * 0.8; }
             wasmExports.zig_internal_on_mouse_wheel(deltaX, deltaY);
         } else {
-            console.error("[WebInput.js TEMP] zig_internal_on_mouse_wheel NOT available or wasmExports error. Exports:", wasmExports); // TEMP LOG
+            if (!this.mouseWheelErrorLogged) {
+                console.error("[WebInput.js TEMP] zig_internal_on_mouse_wheel NOT available or wasmExports error. Exports:", wasmExports);
+                this.mouseWheelErrorLogged = true;
+            }
         }
     });
-
-    // Optional: Prevent context menu on right-click if desired for the canvas
-    // canvas.addEventListener('contextmenu', event => event.preventDefault());
+    console.log("[WebInput.js TEMP] All mouse listeners attached (or attempted). BoundingRect:", canvas.getBoundingClientRect());
 }
 
 function _setupKeyListeners() {
-    // console.log("[WebInput.js TEMP] _setupKeyListeners: Setting up key listeners for window."); // TEMP LOG
     window.addEventListener('keydown', (event) => {
-        console.log("[WebInput.js TEMP] JS keydown. KeyCode:", event.keyCode, "Code:", event.code); // TEMP LOG
         if (wasmExports && wasmExports.zig_internal_on_key_event) {
-            // console.log("[WebInput.js TEMP] zig_internal_on_key_event IS available. Calling."); // TEMP LOG
             wasmExports.zig_internal_on_key_event(event.keyCode, true);
-            // To prevent default browser actions for certain keys (e.g., space, arrows scrolling the page)
-            // you might add: if (isAppKey(event.keyCode)) { event.preventDefault(); }
-            // where isAppKey is a helper to check if the key is handled by your app.
         } else {
-            console.error("[WebInput.js TEMP] zig_internal_on_key_event NOT available or wasmExports error. Exports:", wasmExports); // TEMP LOG
+            if (!this.keyDownErrorLogged) {
+                console.error("[WebInput.js TEMP] zig_internal_on_key_event NOT available or wasmExports error. Exports:", wasmExports);
+                this.keyDownErrorLogged = true;
+            }
         }
     });
 
     window.addEventListener('keyup', (event) => {
-        console.log("[WebInput.js TEMP] JS keyup. KeyCode:", event.keyCode, "Code:", event.code); // TEMP LOG
         if (wasmExports && wasmExports.zig_internal_on_key_event) {
-            // console.log("[WebInput.js TEMP] zig_internal_on_key_event (keyup) IS available. Calling."); // TEMP LOG
             wasmExports.zig_internal_on_key_event(event.keyCode, false);
         } else {
-            console.error("[WebInput.js TEMP] zig_internal_on_key_event (keyup) NOT available or wasmExports error. Exports:", wasmExports); // TEMP LOG
+            if (!this.keyUpErrorLogged) {
+                console.error("[WebInput.js TEMP] zig_internal_on_key_event (keyup) NOT available or wasmExports error. Exports:", wasmExports);
+                this.keyUpErrorLogged = true;
+            }
         }
     });
 }
