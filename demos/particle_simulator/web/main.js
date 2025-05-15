@@ -1,163 +1,145 @@
 // example/web/main.js
 
-// 1. Import all POTENTIAL glue modules.
-import * as webinput from './webinput.js'; 
-// import * as webaudio from './webaudio.js'; // Example: User would uncomment to use
-import { webGPUNativeImports } from './webgpu.js';   // Import the specific object
+import * as webGPU_module from './webgpu.js'; // Renamed to avoid conflict with a potential global
+// Import WebInput module
+import * as webInput from './webinput.js'; 
 
-let wasmInstance = null;
-let canvasElement = null;
+// Global state for the demo
+const globalState = {
+    wasmInstance: null,
+    canvas: null,
+    animationFrameId: null,
+    lastTimestamp: 0,
+    // webInput instance is now set by its setupJS function, not stored directly here initially by main.js
+    // but can be accessed via activeModules.WebInput.instance if needed after setup.
+};
 
-// --- Configuration for Used FFI Modules ---
-const activeModules = [
-    {
-        name: "WebInput",
-        glue: webinput,
-        providesToZig: false, // webinput.js calls Zig exports, doesn't provide env_ funcs for Zig to call
-        jsSetupFunction: webinput.setupInputSystem,
-        jsSetupArgs: (instance, canvasEl) => [instance.exports, canvasEl]
+// Configuration for active modules and their JS setup/dependencies
+const activeModules = {
+    "WebGPU":  {
+        // nativeImports should point to the object containing the env_ functions
+        nativeImports: webGPU_module.webGPUNativeImports, 
+        setupJS: webGPU_module.initWebGPUJs // This is correct
     },
-    // {
-    //     name: "WebAudio",
-    //     glue: webaudio, // Assuming 'webaudio' is the imported module
-    //     providesToZig: true, 
-    //     jsSetupFunction: webaudio.setupWebAudio,
-    //     jsSetupArgs: (instance, _canvasEl) => [instance]
-    // },
-    {
-        name: "WebGPU",
-        glue: webGPUNativeImports, // Use the imported object directly
-        providesToZig: true, // True as webGPUNativeImports contains env_ functions
-        // jsSetupFunction: webgpu.setupWebGPU, // Removed, FFI functions are called from Zig
-        // jsSetupArgs: (instance, canvasEl) => [instance, canvasEl] 
+    "WebInput":{
+        nativeImports: null,        
+        setupJS: (wasmExports, wasmMemory) => { 
+            if (!globalState.canvas) {
+                console.error("[Main.js] Canvas not initialized before WebInput setup.");
+                return null;
+            }
+            webInput.initWebInputJs(wasmExports, globalState.canvas); 
+            console.log("[Main.js] WebInput setup complete via webInput.initWebInputJs.");
+            return null; 
+        }
     }
-];
-
-function getCanvas() {
-    canvasElement = document.getElementById('zigCanvas');
-    if (!canvasElement) {
-        console.error("[Main.js] Canvas element 'zigCanvas' not found in the DOM!");
-        const errorParagraph = document.createElement('p');
-        errorParagraph.textContent = "Error: Canvas element 'zigCanvas' not found. Application cannot start.";
-        errorParagraph.style.color = "red";
-        document.body.prepend(errorParagraph);
-        return null;
-    }
-    return canvasElement;
-}
-
-function resizeCanvas() {
-    if (canvasElement) {
-        canvasElement.width = window.innerWidth;
-        canvasElement.height = window.innerHeight;
-        console.log(`[Main.js] Canvas resized to ${canvasElement.width}x${canvasElement.height}`);
-        // Optional: Notify Zig about the resize if it needs to adapt
-        // if (wasmInstance && wasmInstance.exports && wasmInstance.exports.zig_handle_resize) {
-        //     wasmInstance.exports.zig_handle_resize(canvasElement.width, canvasElement.height);
-        // }
-    }
-}
+};
 
 async function initWasm() {
     console.log("[Main.js] initWasm() called.");
+    
+    globalState.canvas = document.getElementById('zigCanvas'); // Corrected ID
+    if (!globalState.canvas) {
+        console.error("Canvas element with ID 'zigCanvas' not found.");
+        return;
+    }
+    setupCanvas();
 
-    if (!getCanvas()) return;
-    resizeCanvas(); 
-
-    const envImports = {
-        // js_log_string is now part of webGPUNativeImports and will be added by the loop below
+    const importObject = {
+        env: {},
     };
 
-    for (const mod of activeModules) {
-        if (mod.providesToZig && mod.glue) {
-            for (const key in mod.glue) {
-                if (Object.prototype.hasOwnProperty.call(mod.glue, key) && (key.startsWith("env_") || key === "js_log_string")) { // Include js_log_string if defined in glue
-                    if (typeof mod.glue[key] === 'function') {
-                        envImports[key] = mod.glue[key].bind(mod.glue); // Bind `this` to mod.glue
-                    } else {
-                        // If it's not a function (e.g., wasmMemory itself), don't try to bind it.
-                        // Though wasmMemory is not an env_ function, so this path shouldn't be taken for it.
-                        envImports[key] = mod.glue[key];
-                    }
+    for (const moduleName in activeModules) {
+        const moduleConfig = activeModules[moduleName];
+        if (moduleConfig.nativeImports) {
+            for (const key in moduleConfig.nativeImports) {
+                if (typeof moduleConfig.nativeImports[key] === 'function' && 
+                    Object.prototype.hasOwnProperty.call(moduleConfig.nativeImports, key)) {
+                    // Critical: Ensure 'this' context is correct if methods rely on it
+                    // Binding to the nativeImports object ensures its internal 'this' is preserved if necessary
+                    importObject.env[key] = moduleConfig.nativeImports[key].bind(moduleConfig.nativeImports);
                 }
             }
         }
     }
-    const importObject = { env: envImports };
-
+    
     try {
-        const response = await fetch('app.wasm');
+        const response = await fetch('app.wasm'); // Corrected path
         if (!response.ok) {
-            throw new Error(`[Main.js] Failed to fetch app.wasm: ${response.status} ${response.statusText}`);
+            throw new Error(`Failed to fetch app.wasm: ${response.status} ${response.statusText}`);
         }
+        const buffer = await response.arrayBuffer();
+        const { instance, module } = await WebAssembly.instantiate(buffer, importObject);
         
-        const { instance } = await WebAssembly.instantiateStreaming(response, importObject);
-        wasmInstance = instance;
+        globalState.wasmInstance = instance;
+        const wasmExports = instance.exports;
+        const wasmMemory = wasmExports.memory;
+
         console.log("[Main.js] Wasm module instantiated.");
 
-        // CRITICAL STEP: Set the wasmMemory for the JS glue functions that need it
-        // This is done on the original imported object, which the bound functions will reference.
-        if (webGPUNativeImports.wasmMemory !== undefined) { // Check if the property exists
-            webGPUNativeImports.wasmMemory = wasmInstance.exports.memory;
-            console.log("[Main.js] Wasm memory assigned to webGPUNativeImports.");
+        // Pass Wasm memory to webGPUNativeImports if it expects it (for error reporting, etc.)
+        // This was a step in the previous version of webgpu.js that might still be relevant.
+        if (webGPU_module.webGPUNativeImports && typeof webGPU_module.webGPUNativeImports === 'object') {
+             webGPU_module.webGPUNativeImports.wasmMemory = wasmMemory;
         }
-        
-        for (const mod of activeModules) {
-            if (mod.jsSetupFunction && typeof mod.jsSetupFunction === 'function') {
-                console.log(`[Main.js] Setting up ${mod.name}...`);
-                const args = mod.jsSetupArgs(wasmInstance, canvasElement);
-                mod.jsSetupFunction(...args);
-            } else if (mod.glue && mod.providesToZig && !mod.jsSetupFunction) {
-                 console.log(`[Main.js] Module ${mod.name} is active (provides to Zig) but has no specific JS setup function defined in activeModules array.`);
-            } else if (mod.glue && !mod.jsSetupFunction && !mod.providesToZig && mod.name === "WebInput") {
-                 // This case is fine for WebInput if its setup is primary and it doesn't provide env_ funcs
-                 // But the setup call itself is conditional on jsSetupFunction, so this log might be redundant
+
+        for (const moduleName in activeModules) {
+            const moduleConfig = activeModules[moduleName];
+            if (moduleConfig.setupJS) {
+                console.log(`[Main.js] Setting up ${moduleName}...`);
+                moduleConfig.setupJS(wasmExports, wasmMemory); 
             }
         }
         
-        if (wasmInstance.exports && wasmInstance.exports._start) {
-            wasmInstance.exports._start();
+        if (wasmExports._start) {
+            console.log("[Main.js] Calling Wasm module '_start' function...");
+            wasmExports._start();
             console.log("[Main.js] WASM module '_start' function called.");
-        } else if (wasmInstance.exports && wasmInstance.exports.main) { // Fallback to 'main' if '_start' not found
-            wasmInstance.exports.main();
-            console.log("[Main.js] WASM module 'main' function called.");
         } else {
-            console.error("[Main.js] WASM module does not export an '_start' or 'main' function or exports object is missing.");
+            console.error("[Main.js] Wasm module does not export '_start'.");
+            return;
         }
 
-        window.addEventListener('resize', resizeCanvas);
-        
-        let lastTime = 0;
-        function animationLoop(currentTime) {
-            if (!lastTime) lastTime = currentTime;
-            const deltaTime = currentTime - lastTime;
-            lastTime = currentTime;
-
-            if (wasmInstance && wasmInstance.exports && wasmInstance.exports.update_frame) {
-                try {
-                    wasmInstance.exports.update_frame(deltaTime); // Pass actual delta time
-                } catch (e) {
-                    console.error("[Main.js] Error in Wasm update_frame:", e);
-                    window.removeEventListener('resize', resizeCanvas); 
-                    return; 
-                }
-            }
-            requestAnimationFrame(animationLoop);
+        if (!globalState.animationFrameId) {
+            globalState.lastTimestamp = performance.now();
+            globalState.animationFrameId = requestAnimationFrame(animationLoop);
+            console.log("[Main.js] Animation loop started.");
         }
-        requestAnimationFrame(animationLoop);
-        console.log("[Main.js] Animation loop started.");
 
     } catch (e) {
-        console.error("[Main.js] Error loading or instantiating WASM:", e);
-        const errorParagraph = document.createElement('p');
-        errorParagraph.textContent = `Failed to load WASM module: ${e.message}. Check console.`;
-        errorParagraph.style.color = "red";
-        document.body.prepend(errorParagraph);
-        window.removeEventListener('resize', resizeCanvas);
+        console.error("Error loading or instantiating Wasm module:", e);
     }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+function animationLoop(timestamp) {
+    if (!globalState.wasmInstance || !globalState.wasmInstance.exports.update_frame) {
+        if (globalState.animationFrameId) { 
+             globalState.animationFrameId = requestAnimationFrame(animationLoop);
+        }
+        return;
+    }
+    const deltaTime = timestamp - globalState.lastTimestamp;
+    globalState.lastTimestamp = timestamp;
+    globalState.wasmInstance.exports.update_frame(deltaTime);
+    globalState.animationFrameId = requestAnimationFrame(animationLoop);
+}
+
+function setupCanvas() {
+    if (!globalState.canvas) return;
+    globalState.canvas.width = globalState.canvas.clientWidth;
+    globalState.canvas.height = globalState.canvas.clientHeight;
+    console.log(`[Main.js] Canvas resized to ${globalState.canvas.width}x${globalState.canvas.height}`);
+}
+
+window.addEventListener('DOMContentLoaded', () => {
     console.log("[Main.js] DOMContentLoaded event fired. Running initWasm().");
     initWasm();
+});
+window.addEventListener('resize', setupCanvas);
+
+window.addEventListener('beforeunload', () => {
+    if (globalState.wasmInstance && globalState.wasmInstance.exports._wasm_shutdown) {
+        console.log("[Main.js] Calling _wasm_shutdown before unload...");
+        globalState.wasmInstance.exports._wasm_shutdown();
+    }
 });

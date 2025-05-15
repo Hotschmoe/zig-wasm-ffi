@@ -8,7 +8,16 @@ const globalWebGPU = {
     buffers: [null], // Added for GPUBuffer handles
     shaderModules: [null], // Added for GPUShaderModule handles
     error: null,      // To store the last error message
+    wasmExports: null, // To store Wasm exports like zig_receive_adapter
+    memory: null, // To store Wasm memory
 };
+
+// Function to be called by main.js after Wasm instantiation
+export function initWebGPUJs(exports, wasmMemory) {
+    globalWebGPU.wasmExports = exports;
+    globalWebGPU.memory = wasmMemory;
+    console.log("[webgpu.js] WebGPU FFI JS initialized with Wasm exports and memory.");
+}
 
 function storeAdapter(adapter) {
     if (!adapter) return 0;
@@ -60,44 +69,36 @@ export const webGPUNativeImports = {
     // status_code: 0 for success, 1 for error
     env_wgpu_request_adapter_js: function() {
         if (!navigator.gpu) {
-            const errorMsg = "navigator.gpu is not available.";
-            globalWebGPU.error = errorMsg;
-            console.error("[webgpu.js]", errorMsg);
-            if (this.wasmInstance && this.wasmInstance.exports.zig_receive_adapter) {
-                this.wasmInstance.exports.zig_receive_adapter(0, 1);
+            globalWebGPU.error = "WebGPU not supported on this browser.";
+            console.error(globalWebGPU.error);
+            // Even if WebGPU is not supported, we need to call back to Zig to signal failure.
+            if (globalWebGPU.wasmExports && globalWebGPU.wasmExports.zig_receive_adapter) {
+                globalWebGPU.wasmExports.zig_receive_adapter(0, 0); // 0 handle, 0 status for error
             } else {
-                console.error("[webgpu.js] Wasm instance or zig_receive_adapter not ready for error callback.");
+                console.error("[webgpu.js] Wasm exports not ready for error callback in requestAdapter (no WebGPU).");
             }
             return;
         }
-        try {
-            navigator.gpu.requestAdapter().then(adapter => {
-                const adapterHandle = storeAdapter(adapter);
-                if (this.wasmInstance && this.wasmInstance.exports.zig_receive_adapter) {
-                    this.wasmInstance.exports.zig_receive_adapter(adapterHandle, 0);
+
+        navigator.gpu.requestAdapter()
+            .then(adapter => {
+                if (globalWebGPU.wasmExports && globalWebGPU.wasmExports.zig_receive_adapter) {
+                    const adapterHandle = storeAdapter(adapter);
+                    globalWebGPU.wasmExports.zig_receive_adapter(adapterHandle, adapterHandle !== 0 ? 1 : 0); // 1 for success, 0 for error
                 } else {
-                     console.error("[webgpu.js] Wasm instance or zig_receive_adapter not ready for success callback.");
+                    globalWebGPU.error = "[webgpu.js] Wasm instance or zig_receive_adapter not ready for success callback.";
+                    console.error(globalWebGPU.error); 
                 }
-            }).catch(e => {
-                const errorMsg = `Failed to request adapter: ${e.message}`;
-                console.error("[webgpu.js]", errorMsg);
-                globalWebGPU.error = errorMsg;
-                if (this.wasmInstance && this.wasmInstance.exports.zig_receive_adapter) {
-                    this.wasmInstance.exports.zig_receive_adapter(0, 1);
+            })
+            .catch(err => {
+                globalWebGPU.error = "Failed to request WebGPU adapter: " + err.message;
+                console.error(globalWebGPU.error);
+                if (globalWebGPU.wasmExports && globalWebGPU.wasmExports.zig_receive_adapter) {
+                    globalWebGPU.wasmExports.zig_receive_adapter(0, 0); // 0 handle, 0 status for error
                 } else {
-                    console.error("[webgpu.js] Wasm instance or zig_receive_adapter not ready for error callback.");
+                    console.error("[webgpu.js] Wasm exports not ready for error callback in requestAdapter.");
                 }
             });
-        } catch (e) {
-            const errorMsg = `Error in requestAdapterAsync: ${e.message}`;
-            globalWebGPU.error = errorMsg;
-            console.error("[webgpu.js]", errorMsg);
-            if (this.wasmInstance && this.wasmInstance.exports.zig_receive_adapter) {
-                 this.wasmInstance.exports.zig_receive_adapter(0, 1);
-            } else {
-                console.error("[webgpu.js] Wasm instance or zig_receive_adapter not ready for error callback.");
-            }
-        }
     },
 
     // Request Device from Adapter
@@ -107,44 +108,39 @@ export const webGPUNativeImports = {
     env_wgpu_adapter_request_device_js: function(adapter_handle) {
         const adapter = globalWebGPU.adapters[adapter_handle];
         if (!adapter) {
-            const errorMsg = "Invalid adapter handle for requestDevice.";
-            globalWebGPU.error = errorMsg;
-            console.error("[webgpu.js]", errorMsg);
-            if (this.wasmInstance && this.wasmInstance.exports.zig_receive_device) {
-                this.wasmInstance.exports.zig_receive_device(0, 1);
+            globalWebGPU.error = `Invalid adapter handle: ${adapter_handle}`;
+            console.error(globalWebGPU.error);
+            if (globalWebGPU.wasmExports && globalWebGPU.wasmExports.zig_receive_device) {
+                globalWebGPU.wasmExports.zig_receive_device(0, 0); // 0 handle, 0 status for error
             } else {
-                console.error("[webgpu.js] Wasm instance or zig_receive_device not ready for error callback.");
+                console.error("[webgpu.js] Wasm exports not ready for error callback in requestDevice (invalid adapter).");
             }
             return;
         }
-        try {
-            adapter.requestDevice().then(device => {
-                const deviceHandle = storeDevice(device);
-                if (this.wasmInstance && this.wasmInstance.exports.zig_receive_device) {
-                    this.wasmInstance.exports.zig_receive_device(deviceHandle, 0);
+
+        adapter.requestDevice()
+            .then(device => {
+                if (globalWebGPU.wasmExports && globalWebGPU.wasmExports.zig_receive_device) {
+                    const deviceHandle = storeDevice(device);
+                    // Also store the queue immediately if device is obtained
+                    if (deviceHandle !== 0) {
+                        storeQueue(device.queue); // Assuming direct storage, not a separate handle for queue from this call
+                    }
+                    globalWebGPU.wasmExports.zig_receive_device(deviceHandle, deviceHandle !== 0 ? 1 : 0);
                 } else {
-                    console.error("[webgpu.js] Wasm instance or zig_receive_device not ready for success callback.");
+                    globalWebGPU.error = "[webgpu.js] Wasm instance or zig_receive_device not ready for success callback.";
+                    console.error(globalWebGPU.error);
                 }
-            }).catch(e => {
-                const errorMsg = `Failed to request device: ${e.message}`;
-                console.error("[webgpu.js]", errorMsg);
-                globalWebGPU.error = errorMsg;
-                if (this.wasmInstance && this.wasmInstance.exports.zig_receive_device) {
-                    this.wasmInstance.exports.zig_receive_device(0, 1);
+            })
+            .catch(err => {
+                globalWebGPU.error = "Failed to request WebGPU device: " + err.message;
+                console.error(globalWebGPU.error);
+                if (globalWebGPU.wasmExports && globalWebGPU.wasmExports.zig_receive_device) {
+                    globalWebGPU.wasmExports.zig_receive_device(0, 0); // 0 handle, 0 status for error
                 } else {
-                    console.error("[webgpu.js] Wasm instance or zig_receive_device not ready for error callback.");
+                    console.error("[webgpu.js] Wasm exports not ready for error callback in requestDevice.");
                 }
             });
-        } catch (e) {
-            const errorMsg = `Error in adapterRequestDeviceAsync: ${e.message}`;
-            globalWebGPU.error = errorMsg;
-            console.error("[webgpu.js]", errorMsg);
-            if (this.wasmInstance && this.wasmInstance.exports.zig_receive_device) {
-                this.wasmInstance.exports.zig_receive_device(0, 1);
-            } else {
-                console.error("[webgpu.js] Wasm instance or zig_receive_device not ready for error callback.");
-            }
-        }
     },
 
     // REMOVED env_wgpu_poll_promise_js
@@ -231,19 +227,13 @@ export const webGPUNativeImports = {
 
     // Logging function for Zig
     js_log_string: function(message_ptr, message_len) {
-        const memory = this.wasmMemory; 
-        if (!memory) {
-            console.error("[webgpu.js] Wasm memory not available for js_log_string. Message Ptr:", message_ptr, "Len:", message_len);
-            if(message_ptr && message_len) console.log("[Zig Wasm] (memory unavailable) Tried to log message of length:", message_len);
+        if (!globalWebGPU.memory) {
+            console.error("[webgpu.js] Wasm memory not available for js_log_string.");
             return;
         }
-        try {
-            const messageBytes = new Uint8Array(memory.buffer).subarray(message_ptr, message_ptr + message_len);
-            const message = new TextDecoder('utf-8').decode(messageBytes);
-            console.log("[Zig Wasm]", message);
-        } catch (e) {
-            console.error("[webgpu.js] Error in js_log_string:", e, "Message Ptr:", message_ptr, "Len:", message_len);
-        }
+        const buffer = new Uint8Array(globalWebGPU.memory.buffer, message_ptr, message_len);
+        const text = new TextDecoder('utf-8').decode(buffer);
+        console.log("[Zig Wasm]", text);
     },
 
     env_wgpu_device_create_buffer_js: function(device_handle, descriptor_ptr) {
