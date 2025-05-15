@@ -77,7 +77,7 @@ async function initWasm() {
             throw new Error(`[Main.js] Failed to fetch app.wasm: ${response.status} ${response.statusText}`);
         }
         
-        const { instance } = await WebAssembly.instantiateStreaming(response, importObject);
+        const { instance, module } = await WebAssembly.instantiateStreaming(response, importObject);
         wasmInstance = instance; // Store the instance
         console.log("[Main.js] Wasm module instantiated.");
         
@@ -88,6 +88,14 @@ async function initWasm() {
             webinput_glue.setupInputSystem(wasmInstance.exports, canvasElement); // Pass the element directly
         } else {
             console.error("[Main.js] setupInputSystem not found in webinput_glue. Ensure js/webinput.js (from zig-wasm-ffi) exports it and is correctly copied to dist.");
+        }
+
+        // Setup FFI glue for webaudio
+        if (webaudio_glue && webaudio_glue.setupWebAudio) {
+            console.log("[Main.js] Calling webaudio_glue.setupWebAudio...");
+            webaudio_glue.setupWebAudio(wasmInstance);
+        } else {
+            console.error("[Main.js] webaudio_glue.setupWebAudio not found or webaudio_glue module not loaded. Audio will not work.");
         }
 
         // Call the exported '_start' function from the Zig WASM module

@@ -106,6 +106,14 @@ pub fn process_audio_events() void {
                     _ = info.num_channels;
                     _ = info.sample_rate_hz;
                     log_audio_handler("  Info: js_buffer_id, duration_ms, length_samples, num_channels, sample_rate_hz processed.");
+
+                    // Play the sound!
+                    if (g_audio_context) |ctx_handle| {
+                        log_audio_handler("Attempting to play sound...");
+                        webaudio.playDecodedAudio(ctx_handle, info.js_buffer_id);
+                    } else {
+                        log_audio_handler("Cannot play sound: AudioContext handle is null.");
+                    }
                 } else {
                     log_audio_handler("Audio decoded, but no buffer info retrieved.");
                 }

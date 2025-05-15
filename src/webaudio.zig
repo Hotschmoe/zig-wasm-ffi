@@ -21,6 +21,9 @@ extern "env" fn env_decodeAudioData(
     user_request_id: u32, // A user-defined ID to correlate this request with its async response.
 ) void;
 
+// New FFI import for playing a decoded audio buffer
+extern "env" fn env_playDecodedAudio(audio_context_id: u32, js_decoded_buffer_id: u32) void;
+
 // --- State Management ---
 
 /// Opaque handle representing an AudioContext instance managed by JavaScript.
@@ -240,6 +243,22 @@ pub fn getDecodedAudioBufferInfo(user_request_id: u32) ?AudioBufferInfo {
         }
     }
     return null;
+}
+
+/// Plays a previously decoded audio buffer.
+/// Parameters:
+/// - ctx_handle: The handle of the AudioContext to use.
+/// - js_decoded_buffer_id: The ID of the decoded buffer (obtained from AudioBufferInfo.js_buffer_id).
+pub fn playDecodedAudio(ctx_handle: AudioContextHandle, js_decoded_buffer_id: u32) void {
+    if (g_current_audio_context_state != .Ready or ctx_handle != g_audio_context_handle or ctx_handle == 0) {
+        // Optionally log an error or handle it
+        return;
+    }
+    if (js_decoded_buffer_id == 0) {
+        // Optionally log an error (js_buffer_id 0 is invalid)
+        return;
+    }
+    env_playDecodedAudio(ctx_handle, js_decoded_buffer_id);
 }
 
 /// Releases a decode request slot, marking it as free.

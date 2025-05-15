@@ -130,3 +130,32 @@ export async function env_decodeAudioData(context_id, data_ptr, data_len, user_r
         }
     }
 }
+
+/**
+ * Called by Zig to play a previously decoded audio buffer.
+ * @param {number} context_id The ID of the AudioContext to use.
+ * @param {number} js_decoded_buffer_id The ID of the decoded AudioBuffer (stored in jsDecodedBuffers).
+ */
+export function env_playDecodedAudio(context_id, js_decoded_buffer_id) {
+    const ctx = activeAudioContexts[context_id];
+    if (!ctx) {
+        console.error(`[webaudio.js] env_playDecodedAudio: AudioContext with ID ${context_id} not found.`);
+        return;
+    }
+
+    const bufferToPlay = jsDecodedBuffers[js_decoded_buffer_id];
+    if (!bufferToPlay) {
+        console.error(`[webaudio.js] env_playDecodedAudio: Decoded AudioBuffer with JS ID ${js_decoded_buffer_id} not found.`);
+        return;
+    }
+
+    try {
+        const source = ctx.createBufferSource();
+        source.buffer = bufferToPlay;
+        source.connect(ctx.destination);
+        source.start(0); // Play immediately
+        console.log(`[webaudio.js] Playing decoded buffer with JS ID ${js_decoded_buffer_id} on AudioContext ID ${context_id}.`);
+    } catch (e) {
+        console.error(`[webaudio.js] Error playing decoded audio (JS ID ${js_decoded_buffer_id}):`, e);
+    }
+}
