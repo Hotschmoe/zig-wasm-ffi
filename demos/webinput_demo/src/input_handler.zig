@@ -44,7 +44,7 @@ var g_first_update_cycle: bool = true;
 
 // Cached input states for the current frame
 var g_was_left_mouse_just_pressed_this_frame: bool = false;
-// Add more cached states here if needed (e.g., for spacebar)
+var g_was_right_mouse_just_pressed_this_frame: bool = false;
 var g_was_space_just_pressed_this_frame: bool = false;
 
 // --- Public API for Input Handler (Application Layer) ---
@@ -53,6 +53,7 @@ pub fn update() void {
 
     // Cache "just pressed" states for this frame
     g_was_left_mouse_just_pressed_this_frame = webinput.was_mouse_button_just_pressed(MOUSE_LEFT_BUTTON);
+    g_was_right_mouse_just_pressed_this_frame = webinput.was_mouse_button_just_pressed(MOUSE_RIGHT_BUTTON);
     g_was_space_just_pressed_this_frame = webinput.was_key_just_pressed(KEY_SPACE);
 
     const current_mouse_pos = webinput.get_mouse_position();
@@ -134,4 +135,8 @@ pub fn was_space_just_pressed() bool {
 
 pub fn was_left_mouse_button_just_pressed() bool {
     return g_was_left_mouse_just_pressed_this_frame; // Return cached state
+}
+
+pub fn was_right_mouse_button_just_pressed() bool {
+    return g_was_right_mouse_just_pressed_this_frame; // Return cached state for right mouse
 }

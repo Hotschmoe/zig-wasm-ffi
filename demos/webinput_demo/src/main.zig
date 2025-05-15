@@ -53,6 +53,12 @@ export fn update_frame(delta_time_ms: f32) void {
         audio_handler.trigger_explosion_sound();
     }
 
+    // Check for right mouse button press to toggle background music
+    if (input_handler.was_right_mouse_button_just_pressed()) {
+        log_main_app_info("Right mouse button just pressed! Toggling background music...");
+        audio_handler.trigger_toggle_background_music();
+    }
+
     // Check for spacebar press (using the specific helper from input_handler)
     if (input_handler.was_space_just_pressed()) {
         log_main_app_info("Spacebar was just pressed!");

@@ -24,6 +24,10 @@ extern "env" fn env_decodeAudioData(
 // New FFI import for playing a decoded audio buffer
 extern "env" fn env_playDecodedAudio(audio_context_id: u32, js_decoded_buffer_id: u32) void;
 
+// FFI imports for tagged, looping sound playback control
+extern "env" fn env_playLoopingTaggedSound(audio_context_id: u32, js_buffer_id: u32, sound_instance_tag: u32) void;
+extern "env" fn env_stopTaggedSound(audio_context_id: u32, sound_instance_tag: u32) void;
+
 // --- State Management ---
 
 /// Opaque handle representing an AudioContext instance managed by JavaScript.
@@ -259,6 +263,29 @@ pub fn playDecodedAudio(ctx_handle: AudioContextHandle, js_decoded_buffer_id: u3
         return;
     }
     env_playDecodedAudio(ctx_handle, js_decoded_buffer_id);
+}
+
+/// Plays a previously decoded audio buffer in a loop, associated with a tag.
+/// If a sound with the same tag is already playing, it is stopped and replaced.
+/// Parameters:
+/// - ctx_handle: The handle of the AudioContext to use.
+/// - js_buffer_id: The ID of the decoded buffer.
+/// - sound_instance_tag: A u32 tag to uniquely identify this sound instance for later control (e.g., stopping).
+pub fn playLoopingTaggedSound(ctx_handle: AudioContextHandle, js_buffer_id: u32, sound_instance_tag: u32) void {
+    if (g_current_audio_context_state != .Ready or ctx_handle != g_audio_context_handle or ctx_handle == 0) return;
+    if (js_buffer_id == 0) return; // 0 is not a valid js_buffer_id from our JS glue
+    if (sound_instance_tag == 0) return; // 0 might be reserved or indicate no tag
+    env_playLoopingTaggedSound(ctx_handle, js_buffer_id, sound_instance_tag);
+}
+
+/// Stops a tagged sound instance if it is currently playing.
+/// Parameters:
+/// - ctx_handle: The handle of the AudioContext associated with the sound.
+/// - sound_instance_tag: The u32 tag of the sound instance to stop.
+pub fn stopTaggedSound(ctx_handle: AudioContextHandle, sound_instance_tag: u32) void {
+    if (g_current_audio_context_state != .Ready or ctx_handle != g_audio_context_handle or ctx_handle == 0) return;
+    if (sound_instance_tag == 0) return;
+    env_stopTaggedSound(ctx_handle, sound_instance_tag);
 }
 
 /// Releases a decode request slot, marking it as free.

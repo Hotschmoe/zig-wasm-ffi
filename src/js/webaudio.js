@@ -10,6 +10,8 @@ let nextJsDecodedBufferId = 1; // Counter for JS-side decoded buffer IDs.
 const jsDecodedBuffers = {}; // Stores successfully decoded AudioBuffer objects, keyed by ID.
                                // This is for potential future use, e.g., playing the sound by this ID.
 
+const active_tagged_sources = {}; // Stores currently playing tagged AudioBufferSourceNodes, keyed by sound_instance_tag.
+
 // --- Setup Function (Called by user's JavaScript) ---
 
 /**
@@ -157,5 +159,67 @@ export function env_playDecodedAudio(context_id, js_decoded_buffer_id) {
         console.log(`[webaudio.js] Playing decoded buffer with JS ID ${js_decoded_buffer_id} on AudioContext ID ${context_id}.`);
     } catch (e) {
         console.error(`[webaudio.js] Error playing decoded audio (JS ID ${js_decoded_buffer_id}):`, e);
+    }
+}
+
+/**
+ * Called by Zig to play a decoded audio buffer in a loop, identified by a tag.
+ * If another sound with the same tag is already playing, it's stopped first.
+ * @param {number} context_id The ID of the AudioContext to use.
+ * @param {number} js_buffer_id The ID of the decoded AudioBuffer.
+ * @param {number} sound_instance_tag A tag from Zig to identify this sound instance.
+ */
+export function env_playLoopingTaggedSound(context_id, js_buffer_id, sound_instance_tag) {
+    const ctx = activeAudioContexts[context_id];
+    if (!ctx) {
+        console.error(`[webaudio.js] env_playLoopingTaggedSound: AudioContext ID ${context_id} not found.`);
+        return;
+    }
+    const bufferToPlay = jsDecodedBuffers[js_buffer_id];
+    if (!bufferToPlay) {
+        console.error(`[webaudio.js] env_playLoopingTaggedSound: Decoded AudioBuffer JS ID ${js_buffer_id} not found.`);
+        return;
+    }
+
+    // Stop and remove any existing source with the same tag
+    if (active_tagged_sources[sound_instance_tag]) {
+        try {
+            active_tagged_sources[sound_instance_tag].stop();
+            console.log(`[webaudio.js] Stopped existing tagged sound (tag: ${sound_instance_tag}) before playing new one.`);
+        } catch (e) { /* Ignore errors if already stopped or in an invalid state */ }
+        delete active_tagged_sources[sound_instance_tag];
+    }
+
+    try {
+        const source = ctx.createBufferSource();
+        source.buffer = bufferToPlay;
+        source.loop = true;
+        source.connect(ctx.destination);
+        source.start(0);
+        active_tagged_sources[sound_instance_tag] = source;
+        console.log(`[webaudio.js] Started looping tagged sound (tag: ${sound_instance_tag}, buffer JS ID: ${js_buffer_id}) on AudioContext ID ${context_id}.`);
+    } catch (e) {
+        console.error(`[webaudio.js] Error playing looping tagged sound (tag: ${sound_instance_tag}):`, e);
+    }
+}
+
+/**
+ * Called by Zig to stop a tagged, playing sound instance.
+ * @param {number} context_id The ID of the AudioContext (currently unused but good for consistency).
+ * @param {number} sound_instance_tag The tag of the sound instance to stop.
+ */
+export function env_stopTaggedSound(context_id, sound_instance_tag) {
+    _ = context_id; // Context ID might be used for validation in the future
+    const sourceToStop = active_tagged_sources[sound_instance_tag];
+    if (sourceToStop) {
+        try {
+            sourceToStop.stop();
+            console.log(`[webaudio.js] Stopped tagged sound (tag: ${sound_instance_tag}).`);
+        } catch (e) {
+            console.error(`[webaudio.js] Error stopping tagged sound (tag: ${sound_instance_tag}):`, e);
+        }
+        delete active_tagged_sources[sound_instance_tag];
+    } else {
+        console.warn(`[webaudio.js] env_stopTaggedSound: No active sound found for tag ${sound_instance_tag} to stop.`);
     }
 }
