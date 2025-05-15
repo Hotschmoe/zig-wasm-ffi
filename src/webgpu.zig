@@ -238,51 +238,102 @@ pub const TextureAspect = enum(u32) {
 
 pub const TextureViewDescriptor = extern struct {
     label: ?[*:0]const u8,
-    format: ?TextureFormat = null, // Optional: GPUTextureFormat, pass u32 id
-    dimension: ?TextureDimension = null, // Optional: GPUTextureViewDimension, pass u32 id
-    aspect: TextureAspect = .all, // GPUTextureAspect, pass u32 id
-    base_mip_level: u32 = 0, // GPUIntegerCoordinate
-    mip_level_count: ?u32 = null, // Optional: GPUIntegerCoordinate
-    base_array_layer: u32 = 0, // GPUIntegerCoordinate
-    array_layer_count: ?u32 = null, // Optional: GPUIntegerCoordinate
+    format: ?TextureFormat = null,
+    dimension: ?TextureDimension = null, // NOTE: This should ideally be TextureViewDimension if it differs
+    aspect: TextureAspect = .all,
+    base_mip_level: u32 = 0,
+    mip_level_count: ?u32 = null,
+    base_array_layer: u32 = 0,
+    array_layer_count: ?u32 = null,
+};
+
+// Bind Group Layout Related Enums and Structs
+
+pub const ShaderStage = extern struct { // Corresponds to GPUShaderStageFlags (bitflags)
+    pub const NONE: u32 = 0;
+    pub const VERTEX: u32 = 1;
+    pub const FRAGMENT: u32 = 2;
+    pub const COMPUTE: u32 = 4;
+};
+
+pub const BufferBindingType = enum(u32) { // Corresponds to GPUBufferBindingType
+    uniform = 0,
+    storage = 1,
+    read_only_storage = 2,
+    // JS strings: "uniform", "storage", "read-only-storage"
+};
+
+pub const BufferBindingLayout = extern struct { // Corresponds to GPUBufferBindingLayout
+    type: BufferBindingType = .uniform,
+    has_dynamic_offset: bool = false,
+    min_binding_size: u64 = 0, // GPUSize64
+};
+
+// TODO: SamplerBindingLayout, TextureBindingLayout, StorageTextureBindingLayout, ExternalTextureBindingLayout
+// For now, focus on what Renderer.zig uses first: Buffer, Texture.
+
+pub const TextureSampleType = enum(u32) { // Corresponds to GPUTextureSampleType
+    float = 0,
+    unfilterable_float = 1,
+    depth = 2,
+    sint = 3,
+    uint = 4,
+    // JS strings: "float", "unfilterable-float", "depth", "sint", "uint"
+};
+
+// Re-using TextureDimension for view_dimension for now. WebGPU spec has GPUTextureViewDimension
+// which includes "1d", "2d", "2d-array", "cube", "cube-array", "3d".
+// Our TextureDimension only has 1d, 2d, 3d. This might need a separate enum if advanced views are used.
+pub const TextureBindingLayout = extern struct { // Corresponds to GPUTextureBindingLayout
+    sample_type: TextureSampleType = .float,
+    view_dimension: TextureDimension = .@"2d", // This should be TextureViewDimension type
+    multisampled: bool = false,
+};
+
+// More specific enums needed for StorageTextureBindingLayout if used (e.g. StorageTextureAccess)
+// pub const StorageTextureAccess = enum(u32) { write_only = 0, read_only = 1, read_write = 2 };
+// pub const StorageTextureBindingLayout = extern struct { ... }
+
+pub const BindGroupLayoutEntry = extern struct { // Corresponds to GPUBindGroupLayoutEntry
+    binding: u32, // GPUIndex32
+    visibility: u32, // GPUShaderStageFlags (bitmask of ShaderStage constants)
+    buffer: ?BufferBindingLayout = null, // Optional: GPUBufferBindingLayout
+    // sampler: ?SamplerBindingLayout = null, // TODO
+    texture: ?TextureBindingLayout = null, // Optional: GPUTextureBindingLayout
+    // storage_texture: ?StorageTextureBindingLayout = null, // TODO
+    // external_texture: ?ExternalTextureBindingLayout = null, // TODO
+};
+
+pub const BindGroupLayoutDescriptor = extern struct {
+    label: ?[*:0]const u8 = null,
+    entries: [*]const BindGroupLayoutEntry,
+    entries_len: usize,
 };
 
 // --- FFI Imports (JavaScript functions Zig will call) ---
 // These functions are expected to be provided in the JavaScript 'env' object during Wasm instantiation.
-// extern "env" fn env_wgpu_request_adapter_async_js() callconv(.Js) PromiseId;
-// extern "env" fn env_wgpu_adapter_request_device_async_js(adapter_handle: Adapter) callconv(.Js) PromiseId;
-// extern "env" fn env_wgpu_poll_promise_js(promise_id: PromiseId) callconv(.Js) PromiseStatus;
-// extern "env" fn env_wgpu_get_adapter_from_promise_js(promise_id: PromiseId) callconv(.Js) Adapter;
-// extern "env" fn env_wgpu_get_device_from_promise_js(promise_id: PromiseId) callconv(.Js) Device;
-// extern "env" fn env_wgpu_device_get_queue_js(device_handle: Device) callconv(.Js) Queue;
 
-// Error handling related FFI calls - assumed to be called from JS into Zig initially, but now part of 'env'
-// extern "env" fn env_wgpu_get_last_error_msg_ptr_js() callconv(.Js) [*c]const u8;
-// extern "env" fn env_wgpu_get_last_error_msg_len_js() callconv(.Js) usize;
-// extern "env" fn env_wgpu_copy_last_error_msg_js(buffer_ptr: [*c]u8, buffer_len: usize) callconv(.Js) void;
-// extern "env" fn env_wgpu_release_handle_js(type_id: u32, handle: u32) callconv(.Js) void;
-// extern "env" fn js_log_string(message_ptr: [*c]const u8, message_len: usize) callconv(.Js) void;
+extern "env" {
+    // Async Init (Zig -> JS -> Zig callback)
+    pub extern fn env_wgpu_request_adapter_js() void;
+    pub extern fn env_wgpu_adapter_request_device_js(adapter_handle: Adapter) void;
 
-extern "env" fn env_wgpu_request_adapter_js() void;
-extern "env" fn env_wgpu_adapter_request_device_js(adapter_handle: Adapter) void;
-// extern "env" fn env_wgpu_poll_promise_js(promise_id: PromiseId) i32; // REMOVED
-// extern "env" fn env_wgpu_get_adapter_from_promise_js(promise_id: PromiseId) Adapter; // REMOVED
-// extern "env" fn env_wgpu_get_device_from_promise_js(promise_id: PromiseId) Device; // REMOVED
-extern "env" fn env_wgpu_device_get_queue_js(device_handle: Device) Queue;
+    // Synchronous Resource Creation & Operations (Zig -> JS)
+    pub extern fn env_wgpu_device_get_queue_js(device_handle: Device) callconv(.C) Queue;
+    pub extern fn env_wgpu_device_create_buffer_js(device_handle: Device, descriptor_ptr: [*]const BufferDescriptor) callconv(.C) Buffer;
+    pub extern fn env_wgpu_queue_write_buffer_js(queue_handle: Queue, buffer_handle: Buffer, buffer_offset: u64, data_ptr: [*]const u8, data_size: usize) callconv(.C) void;
+    pub extern fn env_wgpu_device_create_shader_module_js(device_handle: Device, descriptor_ptr: [*]const ShaderModuleDescriptor) callconv(.C) ShaderModule;
+    pub extern fn env_wgpu_device_create_texture_js(device_handle: Device, descriptor_ptr: [*]const TextureDescriptor) callconv(.C) Texture;
+    pub extern fn env_wgpu_texture_create_view_js(texture_handle: Texture, descriptor_ptr: ?[*]const TextureViewDescriptor) callconv(.C) TextureView;
+    pub extern fn env_wgpu_device_create_bind_group_layout_js(device_handle: Device, descriptor_ptr: [*]const BindGroupLayoutDescriptor) callconv(.C) BindGroupLayout;
+    pub extern fn env_wgpu_device_create_bind_group_js(device_handle: Device, descriptor_ptr: [*]const BindGroupDescriptor) callconv(.C) BindGroup;
 
-// New FFI imports for buffer and shader module
-extern "env" fn env_wgpu_device_create_buffer_js(device_handle: Device, descriptor_ptr: *const BufferDescriptor) Buffer;
-extern "env" fn env_wgpu_device_create_shader_module_js(device_handle: Device, descriptor_ptr: *const ShaderModuleDescriptor) ShaderModule;
-
-// New FFI for Texture and TextureView
-extern "env" fn env_wgpu_device_create_texture_js(device_handle: Device, descriptor_ptr: *const TextureDescriptor) Texture;
-extern "env" fn env_wgpu_texture_create_view_js(texture_handle: Texture, descriptor_ptr: ?*const TextureViewDescriptor) TextureView;
-
-extern "env" fn env_wgpu_get_last_error_msg_ptr_js() [*c]const u8;
-extern "env" fn env_wgpu_get_last_error_msg_len_js() usize;
-extern "env" fn env_wgpu_copy_last_error_msg_js(buffer_ptr: [*c]u8, buffer_len: usize) void;
-extern "env" fn env_wgpu_release_handle_js(type_id: u32, handle: u32) void;
-// extern "env" fn js_log_string(message_ptr: [*c]const u8, message_len: usize) void; // Removed, use webutils.log
+    // Error Handling & Release
+    pub extern fn env_wgpu_get_last_error_msg_len_js() usize;
+    pub extern fn env_wgpu_copy_last_error_msg_js(buffer_ptr: [*c]u8, buffer_len: usize) void;
+    pub extern fn env_wgpu_release_handle_js(handle_type: HandleType, handle_id: u32) void;
+    // pub extern fn js_log_string(message_ptr: [*c]const u8, message_len: usize) void; // Now in webutils directly
+}
 
 // --- Zig functions exported to be called by JavaScript ---
 // These functions will be implemented by the application using this FFI library (e.g., in webgpu_handler.zig)
@@ -409,34 +460,56 @@ pub fn deviceGetQueue(device: Device) !Queue {
     return queue_handle;
 }
 
-pub fn deviceCreateBuffer(device_handle: Device, descriptor: BufferDescriptor) !Buffer {
-    webutils.log("Creating WebGPU Buffer...");
+pub fn deviceCreateBuffer(device_handle: Device, descriptor: *const BufferDescriptor) !Buffer {
+    webutils.log("Creating WebGPU Buffer (Zig FFI wrapper)...");
     if (device_handle == 0) {
         webutils.log("E00: Invalid device handle (0) passed to deviceCreateBuffer.");
         return error.InvalidHandle;
     }
-    const buffer_handle = env_wgpu_device_create_buffer_js(device_handle, &descriptor);
+    if (descriptor == null) {
+        webutils.log("E00: Invalid descriptor (null) passed to deviceCreateBuffer.");
+        return error.InvalidDescriptor;
+    }
+    const buffer_handle = env_wgpu_device_create_buffer_js(device_handle, descriptor);
     if (buffer_handle == 0) {
-        getAndLogWebGPUError("E10: Failed to create buffer (JS buffer_handle is 0). ");
+        getAndLogWebGPUError("E11: Failed to create buffer (JS buffer_handle is 0). ");
         return error.OperationFailed;
     }
-    webutils.log("Buffer created.");
+    webutils.logV("Buffer created with handle: {d}", .{buffer_handle});
     return buffer_handle;
 }
 
-pub fn deviceCreateShaderModule(device_handle: Device, descriptor: ShaderModuleDescriptor) !ShaderModule {
-    webutils.log("Creating WebGPU Shader Module...");
+pub fn queueWriteBuffer(queue_handle: Queue, buffer_handle: Buffer, buffer_offset: u64, data: []const u8) !void {
+    webutils.logV(
+        "Writing to WebGPU Buffer (Zig FFI wrapper). Queue: {d}, Buffer: {d}, Offset: {d}, Data Size: {d}",
+        .{ queue_handle, buffer_handle, buffer_offset, data.len },
+    );
+    if (queue_handle == 0 or buffer_handle == 0) {
+        webutils.log("E00: Invalid handle (0) for queue or buffer passed to queueWriteBuffer.");
+        return error.InvalidHandle;
+    }
+    env_wgpu_queue_write_buffer_js(queue_handle, buffer_handle, buffer_offset, data.ptr, data.len);
+    // TODO: Check for errors after write? WebGPU doesn't throw sync errors for queue ops usually.
+    webutils.log("Buffer write operation submitted.");
+}
+
+pub fn deviceCreateShaderModule(device_handle: Device, descriptor: *const ShaderModuleDescriptor) !ShaderModule {
+    webutils.log("Creating WebGPU Shader Module (Zig FFI wrapper)...");
     if (device_handle == 0) {
         webutils.log("E00: Invalid device handle (0) passed to deviceCreateShaderModule.");
         return error.InvalidHandle;
     }
-    const module_handle = env_wgpu_device_create_shader_module_js(device_handle, &descriptor);
-    if (module_handle == 0) {
-        getAndLogWebGPUError("E11: Failed to create shader module (JS module_handle is 0). ");
+    if (descriptor == null) {
+        webutils.log("E00: Invalid descriptor (null) passed to deviceCreateShaderModule.");
+        return error.InvalidDescriptor;
+    }
+    const sm_handle = env_wgpu_device_create_shader_module_js(device_handle, descriptor);
+    if (sm_handle == 0) {
+        getAndLogWebGPUError("E12: Failed to create shader module (JS sm_handle is 0). ");
         return error.OperationFailed;
     }
-    webutils.log("Shader module created.");
-    return module_handle;
+    webutils.logV("Shader module created with handle: {d}", .{sm_handle});
+    return sm_handle;
 }
 
 pub fn releaseHandle(handle_type: HandleType, handle: u32) void {
@@ -471,27 +544,101 @@ pub fn deviceCreateTexture(device_handle: Device, descriptor: *const TextureDesc
         webutils.log("E00: Invalid device handle (0) passed to deviceCreateTexture.");
         return error.InvalidHandle;
     }
-    const texture_handle = env_wgpu_device_create_texture_js(device_handle, descriptor);
-    if (texture_handle == 0) {
-        getAndLogWebGPUError("E12: Failed to create texture (JS texture_handle is 0). ");
+    if (descriptor == null) {
+        webutils.log("E00: Invalid descriptor (null) passed to deviceCreateTexture.");
+        return error.InvalidDescriptor;
+    }
+    const tex_handle = env_wgpu_device_create_texture_js(device_handle, descriptor);
+    if (tex_handle == 0) {
+        getAndLogWebGPUError("E13: Failed to create texture (JS tex_handle is 0). ");
         return error.OperationFailed;
     }
-    webutils.log("Texture created via Zig FFI wrapper.");
-    return texture_handle;
+    webutils.logV("Texture created with handle: {d}", .{tex_handle});
+    return tex_handle;
 }
 
 pub fn textureCreateView(texture_handle: Texture, descriptor: ?*const TextureViewDescriptor) !TextureView {
-    webutils.log("Creating WebGPU Texture View (Zig FFI wrapper)...");
+    webutils.logV("Creating WebGPU Texture View for texture {d} (Zig FFI wrapper)...", .{texture_handle});
     if (texture_handle == 0) {
         webutils.log("E00: Invalid texture handle (0) passed to textureCreateView.");
         return error.InvalidHandle;
     }
-    // The descriptor can be null for a default view. JS side must handle null descriptor_ptr.
-    const view_handle = env_wgpu_texture_create_view_js(texture_handle, descriptor);
-    if (view_handle == 0) {
-        getAndLogWebGPUError("E13: Failed to create texture view (JS view_handle is 0). ");
+    const tv_handle = env_wgpu_texture_create_view_js(texture_handle, descriptor);
+    if (tv_handle == 0) {
+        getAndLogWebGPUError("E14: Failed to create texture view (JS tv_handle is 0). ");
         return error.OperationFailed;
     }
-    webutils.log("Texture view created via Zig FFI wrapper.");
-    return view_handle;
+    webutils.logV("Texture View created with handle: {d}", .{tv_handle});
+    return tv_handle;
 }
+
+pub fn deviceCreateBindGroupLayout(device_handle: Device, descriptor: *const BindGroupLayoutDescriptor) !BindGroupLayout {
+    webutils.log("Creating WebGPU BindGroupLayout (Zig FFI wrapper)...");
+    if (device_handle == 0) {
+        webutils.log("E00: Invalid device handle (0) passed to deviceCreateBindGroupLayout.");
+        return error.InvalidHandle;
+    }
+    if (descriptor == null or descriptor.entries.ptr == null and descriptor.entries_len > 0) {
+        webutils.log("E00: Invalid descriptor (null, or null entries with non-zero length) passed to deviceCreateBindGroupLayout.");
+        return error.InvalidDescriptor;
+    }
+    const bgl_handle = env_wgpu_device_create_bind_group_layout_js(device_handle, descriptor);
+    if (bgl_handle == 0) {
+        getAndLogWebGPUError("E15: Failed to create bind group layout (JS bgl_handle is 0). ");
+        return error.OperationFailed;
+    }
+    webutils.logV("BindGroupLayout created with handle: {d}", .{bgl_handle});
+    return bgl_handle;
+}
+
+pub fn deviceCreateBindGroup(device_handle: Device, descriptor: *const BindGroupDescriptor) !BindGroup {
+    webutils.log("Creating WebGPU BindGroup (Zig FFI wrapper)...");
+    if (device_handle == 0) {
+        webutils.log("E00: Invalid device handle (0) passed to deviceCreateBindGroup.");
+        return error.InvalidHandle;
+    }
+    if (descriptor == null or descriptor.entries.ptr == null and descriptor.entries_len > 0) {
+        webutils.log("E00: Invalid descriptor (null, or null entries with non-zero length) passed to deviceCreateBindGroup.");
+        return error.InvalidDescriptor;
+    }
+    const bg_handle = env_wgpu_device_create_bind_group_js(device_handle, descriptor);
+    if (bg_handle == 0) {
+        getAndLogWebGPUError("E16: Failed to create bind group (JS bg_handle is 0). ");
+        return error.OperationFailed;
+    }
+    webutils.logV("BindGroup created with handle: {d}", .{bg_handle});
+    return bg_handle;
+}
+
+// New FFI Structs for BindGroup
+pub const BufferBinding = extern struct {
+    buffer: Buffer,
+    offset: u64 = 0,
+    size: u64 = undefined, // WGPU.BIND_BUFFER_WHOLE_SIZE - JS will handle 'undefined' if passed as a specific large u64 value or similar sentinel.
+};
+
+pub const SamplerBinding = extern struct { // Placeholder - Sampler FFI not yet defined
+    sampler: Sampler,
+};
+
+pub const TextureBinding = extern struct {
+    texture_view: TextureView,
+};
+
+pub const BindGroupEntry = extern struct {
+    binding: u32,
+    resource: Resource,
+
+    pub const Resource = extern union {
+        buffer: BufferBinding,
+        sampler: SamplerBinding,
+        texture: TextureBinding,
+    };
+};
+
+pub const BindGroupDescriptor = extern struct {
+    label: ?[*:0]const u8 = null,
+    layout: BindGroupLayout,
+    entries: [*]const BindGroupEntry,
+    entries_len: usize,
+};

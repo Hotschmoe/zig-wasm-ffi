@@ -9,9 +9,17 @@ const globalWebGPU = {
     shaderModules: [null], // Added for GPUShaderModule handles
     textures: [null], // Added for GPUTexture handles
     textureViews: [null], // Added for GPUTextureView handles
+    bindGroupLayouts: [null], // Added for GPUBindGroupLayout handles
+    bindGroups: {}, // Added for BindGroup
     error: null,      // To store the last error message
     wasmExports: null, // To store Wasm exports like zig_receive_adapter
     memory: null, // To store Wasm memory
+    nextHandle: 1, // Added for BindGroup
+    errorBuffer: new Uint8Array(1024), // Buffer for error messages
+    errorBufferLen: 0, // Length of the last error message
+    // Callback functions from Zig
+    zig_receive_adapter: null,
+    zig_receive_device: null,
 };
 
 // Function to be called by main.js after Wasm instantiation
@@ -67,6 +75,19 @@ function storeTextureView(textureView) {
     if (!textureView) return 0;
     const handle = globalWebGPU.textureViews.length;
     globalWebGPU.textureViews.push(textureView);
+    return handle;
+}
+
+function storeBindGroupLayout(bgl) {
+    if (!bgl) return 0;
+    const handle = globalWebGPU.bindGroupLayouts.length;
+    globalWebGPU.bindGroupLayouts.push(bgl);
+    return handle;
+}
+
+function storeBindGroup(bindGroup) {
+    const handle = globalWebGPU.nextHandle++;
+    globalWebGPU.bindGroups[handle] = bindGroup;
     return handle;
 }
 
@@ -239,6 +260,8 @@ export const webGPUNativeImports = {
             case 6: if (handle > 0 && handle < globalWebGPU.shaderModules.length) globalWebGPU.shaderModules[handle] = null; break;
             case 7: if (handle > 0 && handle < globalWebGPU.textures.length) globalWebGPU.textures[handle] = null; break;
             case 8: if (handle > 0 && handle < globalWebGPU.textureViews.length) globalWebGPU.textureViews[handle] = null; break;
+            case 10: if (handle > 0 && handle < globalWebGPU.bindGroupLayouts.length) globalWebGPU.bindGroupLayouts[handle] = null; break;
+            case 11: if (handle > 0 && handle < globalWebGPU.bindGroups.length) globalWebGPU.bindGroups[handle] = null; break;
             default: console.warn(`[webgpu.js] Unknown type_id for release_handle: ${type_id}`);
         }
     },
@@ -472,6 +495,162 @@ export const webGPUNativeImports = {
         }
     },
 
+    env_wgpu_device_create_bind_group_layout_js: function(device_handle, descriptor_ptr) {
+        try {
+            const device = globalWebGPU.devices[device_handle];
+            if (!device) {
+                return recordError(`Device not found for handle: ${device_handle}`);
+            }
+            globalWebGPU.errorBufferLen = 0; // Clear error before reading
+            const descriptor = readBindGroupLayoutDescriptorFromMemory(descriptor_ptr);
+            
+            if (!descriptor) { // Implies an error was recorded by the reader
+                // const errorMsg = readStringFromMemory(globalWebGPU.errorBuffer.byteOffset, globalWebGPU.errorBufferLen); 
+                // recordError is already called by the reader, and it returns 0 (error handle)
+                return 0; 
+            }
+
+            const bindGroupLayout = device.createBindGroupLayout(descriptor);
+            bindGroupLayout.js_entries_internal = descriptor.js_entries_internal; // Attach for later use
+            const bglHandle = storeBindGroupLayout(bindGroupLayout);
+            return bglHandle;
+        } catch (e) {
+            return recordError(e.message);
+        }
+    },
+
+    env_wgpu_device_create_bind_group_js: function(device_handle, descriptor_ptr) {
+        try {
+            const device = globalWebGPU.devices[device_handle];
+            if (!device) {
+                return recordError(`Device not found for handle: ${device_handle}`);
+            }
+
+            const wasmMemoryU8 = new Uint8Array(globalWebGPU.wasmMemory.buffer);
+            const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
+            const wasmMemoryU64 = new BigUint64Array(globalWebGPU.wasmMemory.buffer); // For u64 fields
+
+            // Read BindGroupDescriptor (label, layout_handle, entries_ptr, entries_len)
+            // struct BindGroupDescriptor {
+            //     label: ?[*:0]const u8 = null, (ptr)
+            //     layout: BindGroupLayout, (u32 handle)
+            //     entries: [*]const BindGroupEntry, (ptr)
+            //     entries_len: usize, (u32)
+            // };
+            let offset = descriptor_ptr / 4; // Assuming descriptor_ptr is u32 aligned
+            const label_ptr = wasmMemoryU32[offset++];
+            const layout_handle = wasmMemoryU32[offset++];
+            const entries_ptr = wasmMemoryU32[offset++];
+            const entries_len = wasmMemoryU32[offset++];
+
+            const jsDescriptor = {};
+            if (label_ptr) {
+                jsDescriptor.label = readStringFromMemory(label_ptr);
+            }
+
+            const bindGroupLayout = globalWebGPU.bindGroupLayouts[layout_handle];
+            if (!bindGroupLayout) {
+                return recordError(`BindGroupLayout not found for handle: ${layout_handle}`);
+            }
+            jsDescriptor.layout = bindGroupLayout;
+
+            jsDescriptor.entries = [];
+            let entry_offset_bytes = entries_ptr;
+            for (let i = 0; i < entries_len; i++) {
+                // struct BindGroupEntry {
+                //     binding: u32,
+                //     resource: Resource, (union)
+                // };
+                // Resource union: buffer: BufferBinding, sampler: SamplerBinding, texture: TextureBinding
+                // struct BufferBinding { buffer: u32, offset: u64, size: u64 }
+                // struct SamplerBinding { sampler: u32 }
+                // struct TextureBinding { texture_view: u32 }
+
+                const jsEntry = {};
+                let current_entry_ptr_u32 = entry_offset_bytes / 4;
+
+                jsEntry.binding = wasmMemoryU32[current_entry_ptr_u32++];
+
+                // The resource is a union. The Zig code must tell us which field of the union is active.
+                // For now, we assume the BindGroupLayout provides enough context to know what type is expected.
+                // This is a simplification. A robust solution would need type tags in the BindGroupEntry from Zig,
+                // or to infer from the BindGroupLayout.
+                // Let's assume for now the layout implies the type, and the demo will pass correct resource handles.
+                
+                // Heuristic: Check the type of resource based on the BGL this BG is created for.
+                // This requires introspecting the BGL, which is complex here.
+                // Alternative: Zig must send a type tag for the union within BindGroupEntry.
+                // For the demo, we'll assume `renderer.zig` creates entries matching BGL types.
+                // The simplest approach is to try and find a valid handle in one of the expected stores.
+
+                // Let's assume a simplified BindGroupEntry.Resource structure from Zig for now:
+                // It would have one field for each type, and only one handle would be non-zero.
+                // This means the Zig union needs to be read carefully.
+                // The Zig extern union has fields: buffer, sampler, texture.
+                // The offset for these will be current_entry_ptr_u32.
+                
+                // Reading the *first field* of the union (e.g. buffer.buffer handle)
+                const resource_handle1 = wasmMemoryU32[current_entry_ptr_u32]; 
+
+                // We need to know the *active* field of the Zig union.
+                // The BGL has this info. We look up the entry in the BGL by binding index.
+                const bglEntry = bindGroupLayout.js_entries_internal[jsEntry.binding];
+                if (!bglEntry) {
+                    return recordError(`No BindGroupLayout entry found for binding ${jsEntry.binding}`);
+                }
+
+                if (bglEntry.buffer !== undefined) { // It's a buffer binding
+                    const buffer_handle = wasmMemoryU32[current_entry_ptr_u32 + 0]; // struct BufferBinding { buffer: Buffer (u32) ...}
+                    const buffer_offset_lo = wasmMemoryU32[current_entry_ptr_u32 + 1]; // offset: u64 (lower 32 bits)
+                    const buffer_offset_hi = wasmMemoryU32[current_entry_ptr_u32 + 2]; // offset: u64 (higher 32 bits)
+                    const buffer_size_lo = wasmMemoryU32[current_entry_ptr_u32 + 3]; // size: u64 (lower 32 bits)
+                    const buffer_size_hi = wasmMemoryU32[current_entry_ptr_u32 + 4]; // size: u64 (higher 32 bits)
+
+                    const gpuBuffer = globalWebGPU.buffers[buffer_handle];
+                    if (!gpuBuffer) return recordError(`GPUBuffer not found for handle ${buffer_handle} at binding ${jsEntry.binding}`);
+                    jsEntry.resource = { 
+                        buffer: gpuBuffer,
+                        offset: Number(BigInt(buffer_offset_hi) << 32n | BigInt(buffer_offset_lo)),
+                        // Size is optional in JS. Handle Zig's 'undefined' for whole buffer.
+                        // Zig uses `undefined` for size, which is a large u64. Max u64 maps to undefined size.
+                        size: (buffer_size_hi === 0xFFFFFFFF && buffer_size_lo === 0xFFFFFFFF) ? undefined : Number(BigInt(buffer_size_hi) << 32n | BigInt(buffer_size_lo)),
+                    };
+                    entry_offset_bytes += 4 + 8 + 8; // binding (u32) + BufferBinding (handle u32, offset u64, size u64) = 4 + 4 + 8 + 8, but handle is read with binding.
+                                               // Correct: binding (u32) + resource (BufferBinding is 20 bytes: u32+u64+u64)
+                                               // Offset from start of BindGroupEntry: binding is 4 bytes. Resource starts after.
+                                               // So, current_entry_ptr_u32 points to start of Resource union.
+                                               // BufferBinding: buffer_handle (u32), offset_lo, offset_hi, size_lo, size_hi (5 * u32 = 20 bytes)
+                                               // Total size of BindGroupEntry with BufferBinding: 4 (binding) + 20 (resource) = 24 bytes.
+                    entry_offset_bytes += 24; // Advance by size of BindGroupEntry containing BufferBinding
+                } else if (bglEntry.texture !== undefined) { // It's a texture view binding
+                    const texture_view_handle = wasmMemoryU32[current_entry_ptr_u32 + 0]; // struct TextureBinding { texture_view: TextureView (u32) }
+                    const gpuTextureView = globalWebGPU.textureViews[texture_view_handle];
+                    if (!gpuTextureView) return recordError(`GPUTextureView not found for handle ${texture_view_handle} at binding ${jsEntry.binding}`);
+                    jsEntry.resource = gpuTextureView;
+                    // Total size of BindGroupEntry with TextureBinding: 4 (binding) + 4 (resource) = 8 bytes.
+                    entry_offset_bytes += 8;
+                } else if (bglEntry.sampler !== undefined) { // It's a sampler binding - Placeholder
+                    // const sampler_handle = wasmMemoryU32[current_entry_ptr_u32 + 0]; // struct SamplerBinding { sampler: Sampler (u32) }
+                    // const gpuSampler = globalWebGPU.samplers[sampler_handle];
+                    // if (!gpuSampler) return recordError(`GPUSampler not found for handle ${sampler_handle} at binding ${jsEntry.binding}`);
+                    // jsEntry.resource = gpuSampler;
+                    // entry_offset_bytes += 8; // 4 (binding) + 4 (resource)
+                    return recordError(`Sampler binding not yet fully implemented in env_wgpu_device_create_bind_group_js for binding ${jsEntry.binding}`);
+                } else {
+                    return recordError(`Unknown resource type in BindGroupLayout for binding ${jsEntry.binding}`);
+                }
+                jsDescriptor.entries.push(jsEntry);
+            }
+
+            const bindGroup = device.createBindGroup(jsDescriptor);
+            const bgHandle = storeBindGroup(bindGroup);
+            // console.log(`JS: Created BindGroup, handle: ${bgHandle}`, bindGroup);
+            return bgHandle;
+        } catch (e) {
+            return recordError(e.message);
+        }
+    },
+
 };
 
 // --- Helper Mappings for Enum Zig -> JS ---
@@ -535,7 +714,139 @@ function mapTextureAspectZigToJs(zigValue) {
     return ZIG_TEXTURE_ASPECT_TO_JS[zigValue] || "all";
 }
 
+const ZIG_BUFFER_BINDING_TYPE_TO_JS = {
+    0: "uniform",
+    1: "storage",
+    2: "read-only-storage",
+};
+function mapBufferBindingTypeZigToJs(zigValue) {
+    return ZIG_BUFFER_BINDING_TYPE_TO_JS[zigValue] || "uniform";
+}
+
+const ZIG_TEXTURE_SAMPLE_TYPE_TO_JS = {
+    0: "float",
+    1: "unfilterable-float",
+    2: "depth",
+    3: "sint",
+    4: "uint",
+};
+function mapTextureSampleTypeZigToJs(zigValue) {
+    return ZIG_TEXTURE_SAMPLE_TYPE_TO_JS[zigValue] || "float";
+}
 
 // It's important that wasmInstance is set on webGPUNativeImports after Wasm instantiation.
 // Example: webGPUNativeImports.wasmInstance = instance;
 // And webGPUNativeImports.wasmMemory = instance.exports.memory;
+
+function readStringFromMemory(ptr, len = 0) {
+    const wasmMemoryU8 = new Uint8Array(globalWebGPU.wasmMemory.buffer);
+    if (len === 0) { // Assume null-terminated if len is not provided
+        let end = ptr;
+        while (wasmMemoryU8[end] !== 0) {
+            end++;
+        }
+        len = end - ptr;
+    }
+    return new TextDecoder().decode(wasmMemoryU8.subarray(ptr, ptr + len));
+}
+
+function recordError(message) {
+    console.error("[webgpu.js]", message);
+    const M = globalWebGPU.errorBuffer;
+    const len = new TextEncoder().encodeInto(message, M).written;
+    globalWebGPU.errorBufferLen = len;
+    return 0; // Standard error return for FFI calls
+}
+
+function readBindGroupLayoutDescriptorFromMemory(descriptor_ptr) {
+    globalWebGPU.errorBufferLen = 0; // Clear previous error for this read operation
+    const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
+    let offset = descriptor_ptr / 4;
+
+    const label_ptr = wasmMemoryU32[offset++];
+    const entries_ptr = wasmMemoryU32[offset++];
+    const entries_len = wasmMemoryU32[offset++];
+
+    const jsDescriptor = {};
+    if (label_ptr) {
+        jsDescriptor.label = readStringFromMemory(label_ptr);
+    }
+
+    jsDescriptor.entries = [];
+    const js_entries_internal = {}; 
+
+    let current_bgl_entry_ptr_bytes = entries_ptr;
+    // Size of the Zig BindGroupLayoutEntry struct, as seen by C/JS for FFI.
+    // binding: u32 (4 bytes)
+    // visibility: u32 (4 bytes)
+    // buffer_layout_ptr: u32 (4 bytes) (pointer to BufferBindingLayout or 0)
+    // sampler_layout_ptr: u32 (4 bytes) (pointer to SamplerBindingLayout or 0)
+    // texture_layout_ptr: u32 (4 bytes) (pointer to TextureBindingLayout or 0)
+    // storage_texture_layout_ptr: u32 (4 bytes) (pointer to StorageTextureBindingLayout or 0)
+    // TOTAL = 4 + 4 + 4 + 4 + 4 + 4 = 24 bytes.
+    const SIZEOF_ZIG_BGL_ENTRY = 24; 
+
+    for (let i = 0; i < entries_len; i++) {
+        let entry_data_ptr_u32 = current_bgl_entry_ptr_bytes / 4;
+        const jsEntry = {};
+        jsEntry.binding = wasmMemoryU32[entry_data_ptr_u32++];
+        jsEntry.visibility = wasmMemoryU32[entry_data_ptr_u32++];
+
+        const buffer_layout_ptr = wasmMemoryU32[entry_data_ptr_u32++];
+        const sampler_layout_ptr = wasmMemoryU32[entry_data_ptr_u32++]; 
+        const texture_layout_ptr = wasmMemoryU32[entry_data_ptr_u32++]; 
+        const storage_texture_layout_ptr = wasmMemoryU32[entry_data_ptr_u32++];
+
+        if (buffer_layout_ptr !== 0) {
+            jsEntry.buffer = readBufferBindingLayoutFromMemory(buffer_layout_ptr);
+            if (globalWebGPU.errorBufferLen > 0) return null; // Error in sub-reader
+        } else if (sampler_layout_ptr !== 0) {
+            recordError(`SamplerBindingLayout in BGL not yet implemented for binding ${jsEntry.binding}`); return null;
+        } else if (texture_layout_ptr !== 0) {
+            jsEntry.texture = readTextureBindingLayoutFromMemory(texture_layout_ptr);
+            if (globalWebGPU.errorBufferLen > 0) return null; // Error in sub-reader
+        } else if (storage_texture_layout_ptr !== 0) {
+            recordError(`StorageTextureBindingLayout in BGL not yet implemented for binding ${jsEntry.binding}`); return null;
+        } else {
+             recordError(`BGL Entry for binding ${jsEntry.binding} has no valid resource type pointer defined.`); return null;
+        }
+        jsDescriptor.entries.push(jsEntry);
+        js_entries_internal[jsEntry.binding] = jsEntry; 
+        current_bgl_entry_ptr_bytes += SIZEOF_ZIG_BGL_ENTRY;
+    }
+    jsDescriptor.js_entries_internal = js_entries_internal; 
+    return jsDescriptor;
+}
+
+function readBufferBindingLayoutFromMemory(layout_ptr) {
+    const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
+    const wasmMemoryU64 = new BigUint64Array(globalWebGPU.wasmMemory.buffer);
+    let offset32 = layout_ptr / 4;
+
+    const typeZig = wasmMemoryU32[offset32++]; // u32 type
+    const hasDynamicOffset = wasmMemoryU32[offset32++] !== 0; // bool (assuming Zig packs bool as u32 for extern struct alignment or it's u8 and needs careful indexing)
+    // minBindingSize is u64. If struct starts at layout_ptr, and first two fields are u32 (8 bytes total),
+    // then minBindingSize (u64) starts at layout_ptr + 8.
+    const minBindingSize = wasmMemoryU64[(layout_ptr + 8) / 8];
+
+    return {
+        type: mapBufferBindingTypeZigToJs(typeZig),
+        hasDynamicOffset: hasDynamicOffset,
+        minBindingSize: Number(minBindingSize),
+    };
+}
+
+function readTextureBindingLayoutFromMemory(layout_ptr) {
+    const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
+    let offset32 = layout_ptr / 4;
+
+    const sampleTypeZig = wasmMemoryU32[offset32++];
+    const viewDimensionZig = wasmMemoryU32[offset32++];
+    const multisampled = wasmMemoryU32[offset32++] !== 0; 
+
+    return {
+        sampleType: mapTextureSampleTypeZigToJs(sampleTypeZig),
+        viewDimension: mapTextureDimensionZigToJs(viewDimensionZig), 
+        multisampled: multisampled,
+    };
+}
