@@ -76,6 +76,7 @@ pub const RendererError = error{
     TextureCreationError,
     TextureViewCreationError,
     DeviceOrQueueUnavailable,
+    BindGroupLayoutCreationError,
 };
 
 // Default simulation parameters
@@ -113,6 +114,17 @@ pub const Renderer = struct {
     hdr_texture: webgpu.Texture,
     hdr_texture_view: webgpu.TextureView,
 
+    // Bind Group Layouts
+    particle_buffer_bgl: webgpu.BindGroupLayout, // For particle advance, expects particle R/W (storage), forces R (read-only storage)
+    particle_buffer_read_only_bgl: webgpu.BindGroupLayout, // For rendering & some compute, expects particle R (read-only storage), species R (read-only storage)
+    camera_bgl: webgpu.BindGroupLayout,
+    simulation_options_bgl: webgpu.BindGroupLayout,
+    bin_fill_size_bgl: webgpu.BindGroupLayout, // For binning shaders, expects bin_offset W (storage)
+    bin_prefix_sum_bgl: webgpu.BindGroupLayout, // Expects source R (read-only storage), dest W (storage), step_size U (uniform)
+    particle_sort_bgl: webgpu.BindGroupLayout, // Expects particle_src R, particle_dest W, bin_offset R, bin_size_atomic W
+    particle_compute_forces_bgl: webgpu.BindGroupLayout, // Expects particle_src R, particle_dest W, bin_offset R, forces R
+    compose_bgl: webgpu.BindGroupLayout, // Expects hdr_texture, blue_noise_texture (both texture_2d<f32>)
+
     // Current active particle buffers (for easier ping-pong management)
     current_particle_buffer: webgpu.Buffer,
     next_particle_buffer: webgpu.Buffer,
@@ -149,6 +161,15 @@ pub const Renderer = struct {
             .blue_noise_texture_view = undefined,
             .hdr_texture = undefined,
             .hdr_texture_view = undefined,
+            .particle_buffer_bgl = undefined,
+            .particle_buffer_read_only_bgl = undefined,
+            .camera_bgl = undefined,
+            .simulation_options_bgl = undefined,
+            .bin_fill_size_bgl = undefined,
+            .bin_prefix_sum_bgl = undefined,
+            .particle_sort_bgl = undefined,
+            .particle_compute_forces_bgl = undefined,
+            .compose_bgl = undefined,
             .current_particle_buffer = undefined,
             .next_particle_buffer = undefined,
             .current_bin_offset_buffer = undefined,
@@ -184,6 +205,10 @@ pub const Renderer = struct {
         self.current_bin_offset_buffer = self.bin_offset_buffer_a;
         self.next_bin_offset_buffer = self.bin_offset_buffer_b;
 
+        log.debug("Renderer.init: Creating bind group layouts...", .{});
+        try self.createBindGroupLayouts(device);
+        log.info("Bind group layouts initialized.", .{});
+
         log.info("Renderer initialized successfully.", .{});
         return self;
     }
@@ -207,8 +232,8 @@ pub const Renderer = struct {
 
         const sim_box_width = self.simulation_box_width;
         const sim_box_height = self.simulation_box_height;
-        const grid_size_x = @ceil(sim_box_width / MAX_FORCE_RADIUS);
-        const grid_size_y = @ceil(sim_box_height / MAX_FORCE_RADIUS);
+        const grid_size_x: f32 = @ceil(sim_box_width / MAX_FORCE_RADIUS);
+        const grid_size_y: f32 = @ceil(sim_box_height / MAX_FORCE_RADIUS);
         const bin_count: u32 = @intFromFloat(grid_size_x * grid_size_y);
         const bin_offset_buffer_size = @sizeOf(u32) * (bin_count + 1);
 
@@ -388,6 +413,126 @@ pub const Renderer = struct {
         self.hdr_texture_view = try self.hdr_texture.createView(&webgpu.TextureViewDescriptor{});
     }
 
+    fn createBindGroupLayouts(self: *Renderer, device: webgpu.Device) !void {
+        // Particle Buffer BGL (for particle advance: particles R/W, forces R)
+        // Corresponds to JS particleBufferBindGroupLayout
+        // Used by particleAdvancePipeline (particle_buffer_bind_group)
+        // Shader: particle_compute.wgsl (advance) -> group(0) binding(0) particles (read_write), binding(1) forces (read_only)
+        // Note: original JS had forces in this BGL. The compute.wgsl for advance does not show forces. It's in computeForces. Let's verify.
+        // particle_advance.wgsl (from old HTML): @group(0) @binding(0) var<storage, read_write> particles
+        // So this BGL is simpler.
+        // Let's make one for Particle Advance (particles R/W)
+        // And another for Compute Forces (particles_src R, particles_dest W, bin_offset R, forces R)
+
+        // BGL for Particle Advance (particles: read_write storage)
+        // This matches particle_buffer_bind_group in JS if it were only for particle_advance_shader
+        const particle_advance_bgl_entries = [_]webgpu.BindGroupLayoutEntry{
+            .{ .binding = 0, .visibility = webgpu.ShaderStage.COMPUTE, .buffer = .{ .type = .storage } },
+        };
+        self.particle_buffer_bgl = try device.createBindGroupLayout(&webgpu.BindGroupLayoutDescriptor{
+            .label = "particle_advance_bgl",
+            .entries = &particle_advance_bgl_entries,
+        });
+
+        // Particle Buffer Read-Only BGL (particles R, species R)
+        // Corresponds to JS particleBufferReadOnlyBindGroupLayout
+        // Used by particleRenderPipelines, binFillSizePipeline, particleSortClearSizePipeline, particleSortPipeline (for source particles)
+        // Shaders: particle_render.wgsl, particle_binning.wgsl (fillBinSize), particle_sort.wgsl (sortParticles source)
+        const particle_read_only_bgl_entries = [_]webgpu.BindGroupLayoutEntry{
+            .{ .binding = 0, .visibility = webgpu.ShaderStage.VERTEX | webgpu.ShaderStage.COMPUTE, .buffer = .{ .type = .read_only_storage } },
+            .{ .binding = 1, .visibility = webgpu.ShaderStage.VERTEX | webgpu.ShaderStage.COMPUTE, .buffer = .{ .type = .read_only_storage } },
+        };
+        self.particle_buffer_read_only_bgl = try device.createBindGroupLayout(&webgpu.BindGroupLayoutDescriptor{
+            .label = "particle_buffer_read_only_bgl",
+            .entries = &particle_read_only_bgl_entries,
+        });
+
+        // Camera BGL (camera UBO)
+        // Corresponds to JS cameraBindGroupLayout
+        const camera_bgl_entries = [_]webgpu.BindGroupLayoutEntry{
+            .{ .binding = 0, .visibility = webgpu.ShaderStage.VERTEX | webgpu.ShaderStage.FRAGMENT, .buffer = .{ .type = .uniform } },
+        };
+        self.camera_bgl = try device.createBindGroupLayout(&webgpu.BindGroupLayoutDescriptor{
+            .label = "camera_bgl",
+            .entries = &camera_bgl_entries,
+        });
+
+        // Simulation Options BGL (sim options UBO)
+        // Corresponds to JS simulationOptionsBindGroupLayout
+        const sim_options_bgl_entries = [_]webgpu.BindGroupLayoutEntry{
+            .{ .binding = 0, .visibility = webgpu.ShaderStage.COMPUTE, .buffer = .{ .type = .uniform } },
+        };
+        self.simulation_options_bgl = try device.createBindGroupLayout(&webgpu.BindGroupLayoutDescriptor{
+            .label = "simulation_options_bgl",
+            .entries = &sim_options_bgl_entries,
+        });
+
+        // Bin Fill Size BGL (bin_offset W storage)
+        // Corresponds to JS binFillSizeBindGroupLayout
+        // Used by binClearSizePipeline, binFillSizePipeline (bin_fill_size_bind_group)
+        // Shader: particle_binning.wgsl -> group(2) binding(0) binSize (atomic, so storage)
+        const bin_fill_size_bgl_entries = [_]webgpu.BindGroupLayoutEntry{
+            .{ .binding = 0, .visibility = webgpu.ShaderStage.COMPUTE, .buffer = .{ .type = .storage } },
+        };
+        self.bin_fill_size_bgl = try device.createBindGroupLayout(&webgpu.BindGroupLayoutDescriptor{
+            .label = "bin_fill_size_bgl",
+            .entries = &bin_fill_size_bgl_entries,
+        });
+
+        // Bin Prefix Sum BGL (source R, dest W, step_size UBO with dynamic offset)
+        // Corresponds to JS binPrefixSumBindGroupLayout
+        // Shader: particle_prefix_sum.wgsl -> group(0) binding(0) source (R), binding(1) dest (W), binding(2) stepSize (U)
+        const prefix_sum_bgl_entries = [_]webgpu.BindGroupLayoutEntry{
+            .{ .binding = 0, .visibility = webgpu.ShaderStage.COMPUTE, .buffer = .{ .type = .read_only_storage } },
+            .{ .binding = 1, .visibility = webgpu.ShaderStage.COMPUTE, .buffer = .{ .type = .storage } },
+            .{ .binding = 2, .visibility = webgpu.ShaderStage.COMPUTE, .buffer = .{ .type = .uniform, .has_dynamic_offset = true, .min_binding_size = @sizeOf(u32) } },
+        };
+        self.bin_prefix_sum_bgl = try device.createBindGroupLayout(&webgpu.BindGroupLayoutDescriptor{
+            .label = "bin_prefix_sum_bgl",
+            .entries = &prefix_sum_bgl_entries,
+        });
+
+        // Particle Sort BGL (source_particles R, dest_particles W, bin_offset R, bin_current_size_atomic W)
+        // Corresponds to JS particleSortBindGroupLayout
+        // Shader: particle_sort.wgsl -> group(0) binding(0) source R, binding(1) dest W, binding(2) binOffset R, binding(3) binSize W (atomic)
+        const particle_sort_bgl_entries = [_]webgpu.BindGroupLayoutEntry{
+            .{ .binding = 0, .visibility = webgpu.ShaderStage.COMPUTE, .buffer = .{ .type = .read_only_storage } },
+            .{ .binding = 1, .visibility = webgpu.ShaderStage.COMPUTE, .buffer = .{ .type = .storage } },
+            .{ .binding = 2, .visibility = webgpu.ShaderStage.COMPUTE, .buffer = .{ .type = .read_only_storage } },
+            .{ .binding = 3, .visibility = webgpu.ShaderStage.COMPUTE, .buffer = .{ .type = .storage } }, // For atomic bin sizes
+        };
+        self.particle_sort_bgl = try device.createBindGroupLayout(&webgpu.BindGroupLayoutDescriptor{
+            .label = "particle_sort_bgl",
+            .entries = &particle_sort_bgl_entries,
+        });
+
+        // Particle Compute Forces BGL (particles_src R, particles_dest W, bin_offset R, forces R)
+        // Corresponds to JS particleComputeForcesBindGroupLayout
+        // Shader: particle_compute.wgsl (computeForces) -> group(0) binding(0) particlesSource R, binding(1) particlesDest W, binding(2) binOffset R, binding(3) forces R
+        const particle_compute_forces_bgl_entries = [_]webgpu.BindGroupLayoutEntry{
+            .{ .binding = 0, .visibility = webgpu.ShaderStage.COMPUTE, .buffer = .{ .type = .read_only_storage } },
+            .{ .binding = 1, .visibility = webgpu.ShaderStage.COMPUTE, .buffer = .{ .type = .storage } },
+            .{ .binding = 2, .visibility = webgpu.ShaderStage.COMPUTE, .buffer = .{ .type = .read_only_storage } },
+            .{ .binding = 3, .visibility = webgpu.ShaderStage.COMPUTE, .buffer = .{ .type = .read_only_storage } },
+        };
+        self.particle_compute_forces_bgl = try device.createBindGroupLayout(&webgpu.BindGroupLayoutDescriptor{
+            .label = "particle_compute_forces_bgl",
+            .entries = &particle_compute_forces_bgl_entries,
+        });
+
+        // Compose BGL (hdrTexture texture_2d, blueNoiseTexture texture_2d)
+        // Corresponds to JS composeBindGroupLayout
+        // Shader: particle_compose.wgsl -> group(0) binding(0) hdrTexture, binding(1) blueNoiseTexture
+        const compose_bgl_entries = [_]webgpu.BindGroupLayoutEntry{
+            .{ .binding = 0, .visibility = webgpu.ShaderStage.FRAGMENT, .texture = .{ .sample_type = .float, .view_dimension = "2d" } },
+            .{ .binding = 1, .visibility = webgpu.ShaderStage.FRAGMENT, .texture = .{ .sample_type = .float, .view_dimension = "2d" } }, // Assuming blue noise is also sampled as float in shader, though format is unorm
+        };
+        self.compose_bgl = try device.createBindGroupLayout(&webgpu.BindGroupLayoutDescriptor{
+            .label = "compose_bgl",
+            .entries = &compose_bgl_entries,
+        });
+    }
+
     pub fn deinit(self: *Renderer) void {
         log.debug("Renderer.deinit: Releasing resources...", .{});
         const device = self.wgpu_handler.device;
@@ -408,6 +553,16 @@ pub const Renderer = struct {
             webgpu.releaseHandle(self.blue_noise_texture.handle, .Texture);
             webgpu.releaseHandle(self.hdr_texture_view.handle, .TextureView);
             webgpu.releaseHandle(self.hdr_texture.handle, .Texture);
+
+            webgpu.releaseHandle(self.particle_buffer_bgl.handle, .BindGroupLayout);
+            webgpu.releaseHandle(self.particle_buffer_read_only_bgl.handle, .BindGroupLayout);
+            webgpu.releaseHandle(self.camera_bgl.handle, .BindGroupLayout);
+            webgpu.releaseHandle(self.simulation_options_bgl.handle, .BindGroupLayout);
+            webgpu.releaseHandle(self.bin_fill_size_bgl.handle, .BindGroupLayout);
+            webgpu.releaseHandle(self.bin_prefix_sum_bgl.handle, .BindGroupLayout);
+            webgpu.releaseHandle(self.particle_sort_bgl.handle, .BindGroupLayout);
+            webgpu.releaseHandle(self.particle_compute_forces_bgl.handle, .BindGroupLayout);
+            webgpu.releaseHandle(self.compose_bgl.handle, .BindGroupLayout);
 
             webgpu.releaseHandle(self.binning_module.handle, .ShaderModule);
             webgpu.releaseHandle(self.compute_module.handle, .ShaderModule);

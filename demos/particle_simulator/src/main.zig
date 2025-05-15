@@ -1,6 +1,7 @@
 const input_handler = @import("input_handler.zig");
 const webgpu_handler = @import("webgpu_engine/webgpu_handler.zig");
 const webgpu_ffi = @import("zig-wasm-ffi").webgpu; // FFI library
+const renderer = @import("webgpu_engine/renderer.zig");
 // const audio_handler = @import("audio_handler.zig"); // Removed
 
 // FFI import for JavaScript's console.log
