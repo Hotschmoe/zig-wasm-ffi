@@ -1,50 +1,62 @@
 const input_handler = @import("input_handler.zig");
+const audio_handler = @import("audio_handler.zig");
 
 // FFI import for JavaScript's console.log
 // This can remain here if main.zig also needs to log directly,
 // or it could be removed if all logging is delegated.
 extern "env" fn js_log_string(message_ptr: [*c]const u8, message_len: u32) void;
 
-// Helper function to log strings from Zig (application-level)
+// Helper function to log strings from Zig, prefixed for this main application module
 fn log_main_app_info(message: []const u8) void {
-    // Simple prefix for now, avoiding std.fmt for freestanding
     const prefix = "[MainApp] ";
-    var buffer: [128]u8 = undefined;
+    var buffer: [128]u8 = undefined; // Assuming messages + prefix won't exceed 128 bytes
     var i: usize = 0;
     while (i < prefix.len and i < buffer.len) : (i += 1) {
         buffer[i] = prefix[i];
     }
     var j: usize = 0;
-    while (j < message.len and (i + j) < buffer.len - 1) : (j += 1) {
+    while (j < message.len and (i + j) < buffer.len - 1) : (j += 1) { // -1 for null terminator if needed by C
         buffer[i + j] = message[j];
     }
     const final_len = i + j;
     js_log_string(&buffer, @intCast(final_len));
 }
 
+// New function to log frame updates
+fn log_frame_update(count: u32, dt_ms: f32) void {
+    _ = count; // Acknowledge use to prevent unused variable error
+    _ = dt_ms; // Acknowledge use
+    log_main_app_info("Frame update processed.");
+}
+
+var frame_count: u32 = 0;
+
 // This is the main entry point called by the Wasm runtime/JS after instantiation.
 // It replaces the previous `pub fn main() void` for JS interaction.
 pub export fn _start() void {
     log_main_app_info("_start() called. Application initialized.");
-    // If input_handler had an explicit init function, it could be called here:
-    // input_handler.init();
+    // input_handler.init_input_system(); // Removed: No specific init in input_handler.zig
+    // Core FFI state init is handled by audio_handler or could be called directly if needed.
+    audio_handler.init_audio_system();
 }
 
 // This function is called repeatedly from JavaScript (e.g., via requestAnimationFrame)
-pub export fn update_frame() void {
-    // 1. Update the input handler (which internally calls webinput.update_input_frame_start())
-    input_handler.update();
+export fn update_frame(delta_time_ms: f32) void {
+    frame_count += 1;
+    log_frame_update(frame_count, delta_time_ms);
 
-    // 2. Application logic using the input handler's state
+    input_handler.update(); // Corrected: Was input_handler.process_events()
+    audio_handler.process_audio_events();
 
-    // Check for left mouse button click (using the specific helper from input_handler)
     if (input_handler.was_left_mouse_button_just_pressed()) {
-        const mouse_pos = input_handler.get_current_mouse_position();
-        // For logging mouse_pos.x and .y, we would need a f32 to string conversion
-        // or an FFI function to log f32 pairs. For now, just log the event.
-        log_main_app_info("Left mouse button clicked!");
-        // Acknowledge use of mouse_pos to prevent unused variable warnings if not logging coordinates.
-        _ = mouse_pos;
+        js_log_string("Left mouse button just pressed!", 31);
+        audio_handler.trigger_explosion_sound();
+    }
+
+    // Check for right mouse button press to toggle background music
+    if (input_handler.was_right_mouse_button_just_pressed()) {
+        log_main_app_info("Right mouse button just pressed! Toggling background music...");
+        audio_handler.trigger_toggle_background_music();
     }
 
     // Check for spacebar press (using the specific helper from input_handler)

@@ -1,0 +1,17 @@
+.{
+    .name = .zig_ffi_example,
+    .version = "0.0.0",
+    .minimum_zig_version = "0.14.0",
+    .dependencies = .{
+        .@"zig-wasm-ffi" = .{
+            .path = "../../",
+        },
+        // .@"zig-wasm-ffi" = .{ .url = "git+https://github.com/Hotschmoe/zig-wasm-ffi.git#master", .hash = "zig_wasm_ffi-0.1.0-nwJE7sRqAAB43lU1tfBUPy2qRhPM_Cn_DZiVSFZ0V5iB" },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src/",
+    },
+    .fingerprint = 0x42ba7777b644561b,
+}
