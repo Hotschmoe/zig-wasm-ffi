@@ -3,7 +3,7 @@
 // Import all exports from the API-specific JS glue files.
 // These files are copied from the zig-wasm-ffi dependency to the 'dist' 
 // directory alongside this main.js and app.wasm by the build.zig script.
-// import * as webaudio_glue from './webaudio.js';
+import * as webaudio_glue from './webaudio.js';
 import * as webinput_glue from './webinput.js';
 // If you add "webgpu" to `used_web_apis` in example/build.zig, 
 // you would also add: import * as webgpu_glue from './webgpu.js';
@@ -60,7 +60,7 @@ async function initWasm() {
             // Spread all functions from the imported glue modules.
             // The Zig FFI declarations (e.g., pub extern "env" fn zig_internal_on_mouse_move...)
             // must match the names of the functions exported by these JS modules.
-            // ...webaudio_glue, // Example if webaudio was used
+            ...webaudio_glue, // Example if webaudio was used
             ...webinput_glue,  // This makes setupInputSystem, etc. from webinput.js available if they were FFI imports
                                // However, setupInputSystem itself is called from JS, not imported by Zig FFI.
                                // The spread here is for functions webinput.js might export *to be called by Zig*,

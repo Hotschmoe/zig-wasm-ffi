@@ -1,5 +1,5 @@
 // zig-wasm-ffi/src/lib.zig
-// pub const webaudio = @import("webaudio.zig");
+pub const webaudio = @import("webaudio.zig");
 pub const webinput = @import("webinput.zig");
 
 // This block ensures that tests defined in webinput.test.zig are included
