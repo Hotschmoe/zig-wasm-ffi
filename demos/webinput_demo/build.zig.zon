@@ -4,7 +4,7 @@
     .minimum_zig_version = "0.14.0",
     .dependencies = .{
         // .@"zig-wasm-ffi" = .{
-        //     .path = "../",
+        //     .path = "../../",
         // },
         .@"zig-wasm-ffi" = .{ .url = "git+https://github.com/Hotschmoe/zig-wasm-ffi.git#master", .hash = "zig_wasm_ffi-0.1.0-nwJE7p10AADViCFDWhkNy1dAzS1I340iekpsJ8Eg0aFZ" },
     },

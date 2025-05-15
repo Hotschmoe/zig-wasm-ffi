@@ -36,9 +36,9 @@
 
 # Zig cache directory
 **/.zig-cache/
-**/.zig-out/
+**/zig-out/
 .zig-cache/
-.zig-out/
+zig-out/
 dist/
 
 # Local Archive and Examples

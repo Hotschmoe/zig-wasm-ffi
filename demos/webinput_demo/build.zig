@@ -76,7 +76,7 @@ pub fn build(b: *std.Build) !void {
     defer all_copy_js_glue_steps.deinit();
 
     for (used_web_apis) |api_name| {
-        const js_source_filename_in_dep = b.fmt("js/{s}.js", .{api_name});
+        const js_source_filename_in_dep = b.fmt("src/js/{s}.js", .{api_name});
         const source_lazy_path = zig_wasm_ffi_dep.path(js_source_filename_in_dep);
 
         const dest_sub_path = b.fmt("../dist/{s}.js", .{api_name});

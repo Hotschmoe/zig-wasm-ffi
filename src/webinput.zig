@@ -1,54 +1,4 @@
 // zig-wasm-ffi/src/webinput.zig
-// const std = @import("std");
-
-// Opaque type for JavaScript objects
-// pub const Gamepad = opaque {};
-
-// FFI declarations for JavaScript glue
-// const js = @import("webinput.js"); // REMOVED - JS functions will be provided as WASM imports
-// pub extern "env" fn js_addKeyListener(event: [*:0]const u8, callback: *const fn (*anyopaque, bool, u32) callconv(.C) void, context_ptr: *anyopaque) void;
-// pub extern "env" fn js_getGamepads() ?*[*]?*Gamepad;
-// pub extern "env" fn js_getGamepadButton(gamepad: *Gamepad, index: u32) bool;
-// pub extern "env" fn js_getGamepadAxis(gamepad: *Gamepad, index: u32) f64;
-
-// const MAX_GAMEPADS = 4; // Maximum number of gamepads expected from the JS API
-
-// Binding functions
-// pub fn addKeyListener(event: [:0]const u8, comptime Callback: type, callback_context: *Callback) void {
-//     js_addKeyListener(event.ptr, Callback.callback, callback_context);
-// }
-
-// Example callback struct for key events
-// pub const KeyCallback = struct {
-//     pressed: bool = false,
-//     key_code: u32 = 0,
-//     pub fn callback(ctx: *anyopaque, pressed: bool, key_code: u32) callconv(.C) void {
-//         const self: *KeyCallback = @ptrCast(@alignCast(ctx));
-//         self.pressed = pressed;
-//         self.key_code = key_code;
-//     }
-// };
-
-// TEMPORARY DIAGNOSTIC LOGS ADDED - REMOVE AFTER DEBUGGING
-
-// FFI import for JavaScript's console.log (TEMPORARY for debugging)
-// extern "env" fn js_log_string(message_ptr: [*c]const u8, message_len: u32) void;
-
-// Helper function to log strings from Zig (TEMPORARY for debugging)
-// fn log_lib_debug(message: []const u8) void {
-//     const prefix = "[WebInputLib ZIG DBG] ";
-//     var buffer: [128]u8 = undefined;
-//     var i: usize = 0;
-//     while (i < prefix.len and i < buffer.len) : (i += 1) {
-//         buffer[i] = prefix[i];
-//     }
-//     var j: usize = 0;
-//     while (j < message.len and (i + j) < buffer.len - 1) : (j += 1) {
-//         buffer[i + j] = message[j];
-//     }
-//     const final_len = i + j;
-//     js_log_string(&buffer, @intCast(final_len));
-// }
 
 // --- Configuration ---
 pub const MAX_KEY_CODES: usize = 256;
@@ -195,14 +145,6 @@ pub fn was_key_just_released(key_code: u32) bool {
     }
     return false;
 }
-
-// Original FFI for addKeyListener and related structs are removed as per previous refactoring.
-// Gamepad related code (constants, FFI, public functions, GamepadData struct) is removed for now.
-// For future gamepad integration, the FFI functions would be declared here similar to:
-// pub extern "env" fn platform_poll_gamepads() void;
-// pub extern "env" fn platform_get_gamepad_count() u32;
-// etc.
-// And public Zig functions would wrap these calls.
 
 // --- Test Utilities ---
 // This function is intended for use in test environments to reset the global state.
