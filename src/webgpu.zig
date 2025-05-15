@@ -1,3 +1,5 @@
+const webutils = @import("webutils.zig");
+
 // Opaque handles for WebGPU objects (represented as u32 IDs from JavaScript)
 // pub const PromiseId = u32; // REMOVED as primary async mechanism changes
 pub const Adapter = u32;
@@ -280,7 +282,7 @@ extern "env" fn env_wgpu_get_last_error_msg_ptr_js() [*c]const u8;
 extern "env" fn env_wgpu_get_last_error_msg_len_js() usize;
 extern "env" fn env_wgpu_copy_last_error_msg_js(buffer_ptr: [*c]u8, buffer_len: usize) void;
 extern "env" fn env_wgpu_release_handle_js(type_id: u32, handle: u32) void;
-extern "env" fn js_log_string(message_ptr: [*c]const u8, message_len: usize) void;
+// extern "env" fn js_log_string(message_ptr: [*c]const u8, message_len: usize) void; // Removed, use webutils.log
 
 // --- Zig functions exported to be called by JavaScript ---
 // These functions will be implemented by the application using this FFI library (e.g., in webgpu_handler.zig)
@@ -296,9 +298,9 @@ extern "env" fn js_log_string(message_ptr: [*c]const u8, message_len: usize) voi
 
 // --- Public API for Zig Application ---
 
-pub fn log(message: []const u8) void {
-    js_log_string(message.ptr, message.len);
-}
+// pub fn log(message: []const u8) void {
+//     js_log_string(message.ptr, message.len);
+// }
 
 fn simple_min(a: u32, b: u32) u32 {
     return if (a < b) a else b;
@@ -308,12 +310,12 @@ fn simple_min(a: u32, b: u32) u32 {
 // Renamed to avoid conflict if application also has a getLastErrorMsg
 pub fn getAndLogWebGPUError(prefix: []const u8) void {
     if (env_wgpu_get_last_error_msg_ptr_js() == 0) {
-        if (prefix.len > 0) log(prefix);
+        if (prefix.len > 0) webutils.log(prefix);
         return;
     }
     const len = env_wgpu_get_last_error_msg_len_js();
     if (len == 0) {
-        if (prefix.len > 0) log(prefix);
+        if (prefix.len > 0) webutils.log(prefix);
         return;
     }
 
@@ -330,8 +332,8 @@ pub fn getAndLogWebGPUError(prefix: []const u8) void {
             @memcpy(log_buf[current_len..][0..prefix.len], prefix[0..prefix.len]);
             current_len += prefix.len;
         } else {
-            log(prefix); // Prefix too long for combined buffer, log separately
-            log(error_buf[0..copy_len]);
+            webutils.log(prefix); // Prefix too long for combined buffer, log separately
+            webutils.log(error_buf[0..copy_len]);
             return;
         }
     }
@@ -350,16 +352,16 @@ pub fn getAndLogWebGPUError(prefix: []const u8) void {
         } else {
             // Error message too long for remaining space, log separately if prefix was already copied
             if (prefix.len == 0) { // If prefix wasn't an issue, then just log error_buf directly
-                log(error_buf[0..copy_len]);
+                webutils.log(error_buf[0..copy_len]);
             } else { // Prefix was copied, log error part that didn't fit
-                log(log_buf[0..current_len]); // Log what fit (prefix + space)
-                log(error_buf[0..copy_len]); // Log the error message
+                webutils.log(log_buf[0..current_len]); // Log what fit (prefix + space)
+                webutils.log(error_buf[0..copy_len]); // Log the error message
             }
             return;
         }
     }
 
-    log(log_buf[0..current_len]);
+    webutils.log(log_buf[0..current_len]);
 }
 
 // REMOVED pollPromise function
@@ -368,19 +370,19 @@ pub fn getAndLogWebGPUError(prefix: []const u8) void {
 // Initiates the request for a WebGPU Adapter.
 // The result will be delivered asynchronously to the exported Zig function `zig_receive_adapter`.
 pub fn requestAdapter() void {
-    log("Requesting WebGPU Adapter (async via callback)...");
+    webutils.log("Requesting WebGPU Adapter (async via callback)...");
     env_wgpu_request_adapter_js();
 }
 
 // Initiates the request for a WebGPU Device from an Adapter.
 // The result will be delivered asynchronously to the exported Zig function `zig_receive_device`.
 pub fn adapterRequestDevice(adapter: Adapter) void {
-    log("Requesting WebGPU Device (async via callback)...");
+    webutils.log("Requesting WebGPU Device (async via callback)...");
     if (adapter == 0) {
         // This is a synchronous error check before making the async call.
         // The application needs a way to know this immediate failure.
         // For now, we log. A robust FFI might have requestAdapter return an error for invalid params.
-        log("E00: Invalid adapter handle (0) passed to adapterRequestDevice. Device request not sent.");
+        webutils.log("E00: Invalid adapter handle (0) passed to adapterRequestDevice. Device request not sent.");
         // Potentially, the JS side could also check and call back with an error,
         // but an early Zig-side check is good.
         // How to signal this back to the caller in an async model without return values here?
@@ -392,9 +394,9 @@ pub fn adapterRequestDevice(adapter: Adapter) void {
 }
 
 pub fn deviceGetQueue(device: Device) !Queue {
-    log("Getting WebGPU Queue...");
+    webutils.log("Getting WebGPU Queue...");
     if (device == 0) {
-        log("E00: Invalid device handle (0) passed to deviceGetQueue.");
+        webutils.log("E00: Invalid device handle (0) passed to deviceGetQueue.");
         return error.QueueRetrievalFailed; // Synchronous error for invalid input
     }
     const queue_handle = env_wgpu_device_get_queue_js(device);
@@ -403,14 +405,14 @@ pub fn deviceGetQueue(device: Device) !Queue {
         getAndLogWebGPUError("E09: Failed to get queue (JS queue_handle is 0). ");
         return error.QueueRetrievalFailed;
     }
-    log("Queue acquired.");
+    webutils.log("Queue acquired.");
     return queue_handle;
 }
 
 pub fn deviceCreateBuffer(device_handle: Device, descriptor: BufferDescriptor) !Buffer {
-    log("Creating WebGPU Buffer...");
+    webutils.log("Creating WebGPU Buffer...");
     if (device_handle == 0) {
-        log("E00: Invalid device handle (0) passed to deviceCreateBuffer.");
+        webutils.log("E00: Invalid device handle (0) passed to deviceCreateBuffer.");
         return error.InvalidHandle;
     }
     const buffer_handle = env_wgpu_device_create_buffer_js(device_handle, &descriptor);
@@ -418,14 +420,14 @@ pub fn deviceCreateBuffer(device_handle: Device, descriptor: BufferDescriptor) !
         getAndLogWebGPUError("E10: Failed to create buffer (JS buffer_handle is 0). ");
         return error.OperationFailed;
     }
-    log("Buffer created.");
+    webutils.log("Buffer created.");
     return buffer_handle;
 }
 
 pub fn deviceCreateShaderModule(device_handle: Device, descriptor: ShaderModuleDescriptor) !ShaderModule {
-    log("Creating WebGPU Shader Module...");
+    webutils.log("Creating WebGPU Shader Module...");
     if (device_handle == 0) {
-        log("E00: Invalid device handle (0) passed to deviceCreateShaderModule.");
+        webutils.log("E00: Invalid device handle (0) passed to deviceCreateShaderModule.");
         return error.InvalidHandle;
     }
     const module_handle = env_wgpu_device_create_shader_module_js(device_handle, &descriptor);
@@ -433,7 +435,7 @@ pub fn deviceCreateShaderModule(device_handle: Device, descriptor: ShaderModuleD
         getAndLogWebGPUError("E11: Failed to create shader module (JS module_handle is 0). ");
         return error.OperationFailed;
     }
-    log("Shader module created.");
+    webutils.log("Shader module created.");
     return module_handle;
 }
 
@@ -464,9 +466,9 @@ pub const GeneralWebGPUError = error{
 };
 
 pub fn deviceCreateTexture(device_handle: Device, descriptor: *const TextureDescriptor) !Texture {
-    log("Creating WebGPU Texture (Zig FFI wrapper)...");
+    webutils.log("Creating WebGPU Texture (Zig FFI wrapper)...");
     if (device_handle == 0) {
-        log("E00: Invalid device handle (0) passed to deviceCreateTexture.");
+        webutils.log("E00: Invalid device handle (0) passed to deviceCreateTexture.");
         return error.InvalidHandle;
     }
     const texture_handle = env_wgpu_device_create_texture_js(device_handle, descriptor);
@@ -474,14 +476,14 @@ pub fn deviceCreateTexture(device_handle: Device, descriptor: *const TextureDesc
         getAndLogWebGPUError("E12: Failed to create texture (JS texture_handle is 0). ");
         return error.OperationFailed;
     }
-    log("Texture created via Zig FFI wrapper.");
+    webutils.log("Texture created via Zig FFI wrapper.");
     return texture_handle;
 }
 
 pub fn textureCreateView(texture_handle: Texture, descriptor: ?*const TextureViewDescriptor) !TextureView {
-    log("Creating WebGPU Texture View (Zig FFI wrapper)...");
+    webutils.log("Creating WebGPU Texture View (Zig FFI wrapper)...");
     if (texture_handle == 0) {
-        log("E00: Invalid texture handle (0) passed to textureCreateView.");
+        webutils.log("E00: Invalid texture handle (0) passed to textureCreateView.");
         return error.InvalidHandle;
     }
     // The descriptor can be null for a default view. JS side must handle null descriptor_ptr.
@@ -490,6 +492,6 @@ pub fn textureCreateView(texture_handle: Texture, descriptor: ?*const TextureVie
         getAndLogWebGPUError("E13: Failed to create texture view (JS view_handle is 0). ");
         return error.OperationFailed;
     }
-    log("Texture view created via Zig FFI wrapper.");
+    webutils.log("Texture view created via Zig FFI wrapper.");
     return view_handle;
 }
