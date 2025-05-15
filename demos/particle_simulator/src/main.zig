@@ -45,13 +45,13 @@ pub export fn _start() void {
     log("Zig _start called from main.zig.");
 
     // Initialize WebGPU through the handler
-    webgpu_handler.init() catch |err| {
+    webgpu_handler.init() catch {
         // Log error using the direct log function as webgpu_handler.init might have failed before its log is fully usable.
         // Or, webgpu_handler.init itself should log detailed errors using webgpu.log from the FFI layer.
-        log("WebGPU Handler initialization failed.");
+        log("WebGPU Handler initialization failed in main.zig.");
         // Further error details should have been logged by webgpu_handler.init or webgpu.zig FFI calls.
-        _ = err; // Acknowledge error
-        return;
+        // The error is already logged by the handler, we just need to stop execution here.
+        return; // Exit _start if init fails
     };
 
     log("WebGPU Handler initialized successfully by main.zig.");

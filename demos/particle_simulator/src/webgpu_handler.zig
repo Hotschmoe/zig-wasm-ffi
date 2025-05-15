@@ -5,6 +5,9 @@ var g_adapter: webgpu.Adapter = 0;
 var g_device: webgpu.Device = 0;
 var g_queue: webgpu.Queue = 0;
 
+// Helper comptime string for formatAdapterInfo
+const ADAPTER_INFO_STATIC_MSG = "WebGPU Initialized: Adapter, Device, Queue acquired.";
+
 fn log(comptime message: []const u8, comptime args: anytype) void {
     // Assuming webgpu.log is available from the FFI layer
     // webgpu.log(std.fmt.comptimePrint(message, args)); // This would require std
@@ -52,7 +55,8 @@ pub fn init() !void {
     // log("[WebGPUHandler] Queue ID: {d}", .{g_queue});
 
     log("[WebGPUHandler] WebGPU Initialized Successfully.", .{});
-    logSlice(formatAdapterInfo());
+    const info_array = formatAdapterInfo();
+    logSlice(info_array[0..ADAPTER_INFO_STATIC_MSG.len]);
 }
 
 pub fn deinit() void {
@@ -78,37 +82,33 @@ pub fn getQueue() webgpu.Queue {
     return g_queue;
 }
 
-// Example of a helper function to format info without std.fmt.allocPrint
+// Example of a helper function to format info without std.fmt.
 // This is very basic and uses a fixed buffer.
 fn formatAdapterInfo() [100]u8 {
     var buffer: [100]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buffer);
-    const writer = fbs.writer();
 
-    // This still uses std.io.fixedBufferStream and writer.print which are std lib.
-    // To be truly no_std, manual string construction (e.g. with @memcpy and integer to string conversion)
-    // would be needed here.
-    // For now, this part will cause issues if `std` is not available/permissible at all.
-    // Let's simplify it to just log a static string for now to avoid std dep here.
-    _ = writer.print("Adapter: {d}, Device: {d}, Queue: {d}", .{ g_adapter, g_device, g_queue }) catch {
-        return "Failed to format WebGPU info.";
+    // Ensure the message fits, leaving space for a null terminator if desired for other uses.
+    comptime if (ADAPTER_INFO_STATIC_MSG.len >= buffer.len) { // >= to leave space for null terminator if we add one
+        @compileError("Adapter info message too long for buffer");
     };
-    // return fbs.getWritten(); // This returns a slice, but the func expects an array.
-    // To return an array, you'd need to copy or ensure it fills and then maybe return a slice of it.
-    // This is a placeholder showing the difficulty of no_std string formatting.
 
-    // Simplified: return a comptime known string or just log internally.
-    // The `log` function in this file is also simplified and doesn't use std.fmt.comptimePrint correctly
-    // without std for formatting args. Let's assume the webgpu.log can handle basic strings.
-    _ = g_adapter;
-    _ = g_device;
-    _ = g_queue; // use vars
-    return "WebGPU Info (Adapter/Device/Queue IDs available internally)";
+    @memcpy(buffer[0..ADAPTER_INFO_STATIC_MSG.len], ADAPTER_INFO_STATIC_MSG);
+
+    // Optional: Null terminate the string in the buffer.
+    // This is good practice if the buffer might be read by C-style functions.
+    // logSlice takes a well-defined slice, so null termination isn't strictly necessary for it.
+    buffer[ADAPTER_INFO_STATIC_MSG.len] = 0;
+
+    // Optional: Fill the rest of the buffer, e.g., with spaces, if a full "initialized" buffer is desired.
+    // var i = ADAPTER_INFO_STATIC_MSG.len + 1;
+    // while (i < buffer.len) : (i += 1) {
+    //     buffer[i] = ' '; // or 0
+    // }
+
+    return buffer;
 }
 
 // To make this truly no_std, the `formatAdapterInfo` and `log` functions
 // would need to avoid `std.io.fixedBufferStream` and `std.fmt` respectively for arguments.
 // `webgpu.log` itself is an FFI call and is fine.
 // For now, the `log` function is simplified and `formatAdapterInfo` is a placeholder.
-
-const std = @import("std"); // For std.io.fixedBufferStream in formatAdapterInfo. REMOVE FOR TRUE NO_STD.

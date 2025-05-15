@@ -19,32 +19,36 @@ pub const HandleType = enum(u32) {
     queue = 4,
 };
 
-// --- FFI Imports from JavaScript (js/webgpu.js) ---
-extern "env" fn env_wgpu_request_adapter_async_js() callconv(.Js) PromiseId;
+// --- FFI Imports (JavaScript functions Zig will call) ---
+// These functions are expected to be provided in the JavaScript 'env' object during Wasm instantiation.
+// extern "env" fn env_wgpu_request_adapter_async_js() callconv(.Js) PromiseId;
+// extern "env" fn env_wgpu_adapter_request_device_async_js(adapter_handle: Adapter) callconv(.Js) PromiseId;
+// extern "env" fn env_wgpu_poll_promise_js(promise_id: PromiseId) callconv(.Js) PromiseStatus;
+// extern "env" fn env_wgpu_get_adapter_from_promise_js(promise_id: PromiseId) callconv(.Js) Adapter;
+// extern "env" fn env_wgpu_get_device_from_promise_js(promise_id: PromiseId) callconv(.Js) Device;
+// extern "env" fn env_wgpu_device_get_queue_js(device_handle: Device) callconv(.Js) Queue;
 
-extern "env" fn env_wgpu_adapter_request_device_async_js(adapter_handle: Adapter) callconv(.Js) PromiseId;
+// Error handling related FFI calls - assumed to be called from JS into Zig initially, but now part of 'env'
+// extern "env" fn env_wgpu_get_last_error_msg_ptr_js() callconv(.Js) [*c]const u8;
+// extern "env" fn env_wgpu_get_last_error_msg_len_js() callconv(.Js) usize;
+// extern "env" fn env_wgpu_copy_last_error_msg_js(buffer_ptr: [*c]u8, buffer_len: usize) callconv(.Js) void;
+// extern "env" fn env_wgpu_release_handle_js(type_id: u32, handle: u32) callconv(.Js) void;
+// extern "env" fn js_log_string(message_ptr: [*c]const u8, message_len: usize) callconv(.Js) void;
 
-extern "env" fn env_wgpu_poll_promise_js(promise_id: PromiseId) callconv(.Js) i32;
+extern "env" fn env_wgpu_request_adapter_async_js() PromiseId;
+extern "env" fn env_wgpu_adapter_request_device_async_js(adapter_handle: Adapter) PromiseId;
+extern "env" fn env_wgpu_poll_promise_js(promise_id: PromiseId) i32;
+extern "env" fn env_wgpu_get_adapter_from_promise_js(promise_id: PromiseId) Adapter;
+extern "env" fn env_wgpu_get_device_from_promise_js(promise_id: PromiseId) Device;
+extern "env" fn env_wgpu_device_get_queue_js(device_handle: Device) Queue;
 
-extern "env" fn env_wgpu_get_adapter_from_promise_js(promise_id: PromiseId) callconv(.Js) Adapter;
+extern "env" fn env_wgpu_get_last_error_msg_ptr_js() [*c]const u8;
+extern "env" fn env_wgpu_get_last_error_msg_len_js() usize;
+extern "env" fn env_wgpu_copy_last_error_msg_js(buffer_ptr: [*c]u8, buffer_len: usize) void;
+extern "env" fn env_wgpu_release_handle_js(type_id: u32, handle: u32) void;
+extern "env" fn js_log_string(message_ptr: [*c]const u8, message_len: usize) void;
 
-extern "env" fn env_wgpu_get_device_from_promise_js(promise_id: PromiseId) callconv(.Js) Device;
-
-extern "env" fn env_wgpu_device_get_queue_js(device_handle: Device) callconv(.Js) Queue;
-
-// Error handling
-extern "env" fn env_wgpu_get_last_error_msg_ptr_js() callconv(.Js) u32; // Returns 1 if error, 0 if none
-
-extern "env" fn env_wgpu_get_last_error_msg_len_js() callconv(.Js) u32;
-
-extern "env" fn env_wgpu_copy_last_error_msg_js(buffer_ptr: [*c]u8, buffer_len: u32) callconv(.Js) void;
-
-// Resource management
-extern "env" fn env_wgpu_release_handle_js(type_id: u32, handle: u32) callconv(.Js) void;
-
-extern "env" fn js_log_string(message_ptr: [*c]const u8, message_len: usize) callconv(.Js) void;
-
-// --- Public Zig API ---
+// --- Public API for Zig Application ---
 
 pub fn log(message: []const u8) void {
     js_log_string(message.ptr, message.len);
@@ -158,11 +162,13 @@ pub fn requestAdapter() !Adapter {
         return error.AdapterRequestFailed;
     }
 
-    if (!pollPromise(promise_id, "Adapter promise fulfilled.", "E02: Adapter promise rejected. ") catch |err| {
+    const promise_ok = pollPromise(promise_id, "Adapter promise fulfilled.", "E02: Adapter promise rejected. ") catch |err| {
         log("E03: Error during adapter promise polling.");
         releaseHandle(HandleType.promise, promise_id);
         return err;
-    }) {
+    };
+
+    if (!promise_ok) {
         releaseHandle(HandleType.promise, promise_id);
         return error.AdapterRequestFailed;
     }
@@ -186,11 +192,13 @@ pub fn adapterRequestDevice(adapter: Adapter) !Device {
         return error.DeviceRequestFailed;
     }
 
-    if (!pollPromise(promise_id, "Device promise fulfilled.", "E06: Device promise rejected. ") catch |err| {
+    const promise_ok = pollPromise(promise_id, "Device promise fulfilled.", "E06: Device promise rejected. ") catch |err| {
         log("E07: Error during device promise polling.");
         releaseHandle(HandleType.promise, promise_id);
         return err;
-    }) {
+    };
+
+    if (!promise_ok) {
         releaseHandle(HandleType.promise, promise_id);
         return error.DeviceRequestFailed;
     }
