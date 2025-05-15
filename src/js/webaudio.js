@@ -209,7 +209,7 @@ export function env_playLoopingTaggedSound(context_id, js_buffer_id, sound_insta
  * @param {number} sound_instance_tag The tag of the sound instance to stop.
  */
 export function env_stopTaggedSound(context_id, sound_instance_tag) {
-    _ = context_id; // Context ID might be used for validation in the future
+    // context_id is not currently used but is part of the function signature for consistency.
     const sourceToStop = active_tagged_sources[sound_instance_tag];
     if (sourceToStop) {
         try {
