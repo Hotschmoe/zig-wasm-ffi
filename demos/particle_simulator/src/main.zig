@@ -1,5 +1,7 @@
 const input_handler = @import("input_handler.zig");
 const webgpu_handler = @import("webgpu_engine/webgpu_handler.zig");
+const webgpu_ffi = @import("zig-wasm-ffi").webgpu; // FFI library
+const std = @import("std"); // For debug printing offsets
 // const audio_handler = @import("audio_handler.zig"); // Removed
 
 // FFI import for JavaScript's console.log
@@ -27,7 +29,6 @@ fn log(message: []const u8) void {
     // We will rely on webgpu_handler to have initialized its logging or use its log function.
     // webgpu_handler.log(message, .{}); // If webgpu_handler.log takes comptime args
     // The simplest is if webgpu.log is globally available. Let's assume that.
-    const webgpu_ffi = @import("zig-wasm-ffi").webgpu; // Adjust if webgpu_handler re-exports it or use module.
     webgpu_ffi.log(message);
 }
 
@@ -46,28 +47,43 @@ pub export fn _start() void {
 
     // Initialize WebGPU through the handler
     webgpu_handler.init() catch {
-        // Log error using the direct log function as webgpu_handler.init might have failed before its log is fully usable.
-        // Or, webgpu_handler.init itself should log detailed errors using webgpu.log from the FFI layer.
         log("WebGPU Handler initialization failed in main.zig.");
-        // Further error details should have been logged by webgpu_handler.init or webgpu.zig FFI calls.
-        // The error is already logged by the handler, we just need to stop execution here.
-        return; // Exit _start if init fails
+        return;
     };
 
-    log("WebGPU Handler initialized successfully by main.zig.");
-    // Access WGPU objects via webgpu_handler getters if needed
-    // const adapter = webgpu_handler.getAdapter();
-    // const device = webgpu_handler.getDevice();
-    // const queue = webgpu_handler.getQueue();
-    // log(std.fmt.comptimePrint("Main.zig sees Adapter: {d}, Device: {d}, Queue: {d}", .{adapter, device, queue}));
-    // The above log needs a no_std string formatter.
-    // For now, webgpu_handler.init() logs its own success and details.
+    // TODO: Add a loop here to wait for webgpu_handler.isInitialized() or webgpu_handler.hasFailed()
+    // For now, we'll proceed and hope it initializes quickly for the debug prints.
+    // In a real app, you'd want to wait or handle the pending state.
+    log("WebGPU Handler init call made. Check console for async callback status.");
 
-    // TODO: Add more application-specific setup here that uses the WebGPU device/queue
+    // Debug printing for struct offsets
+    // This uses std.debug.print, assuming it routes to console.log in the browser via FFI.
+    std.debug.print("--- WebGPU Struct Offsets (main.zig) ---\\n", .{});
+    std.debug.print("BufferDescriptor.label offset: {d}\\n", .{@offsetOf(webgpu_ffi.BufferDescriptor, "label")});
+    std.debug.print("BufferDescriptor.size offset: {d}\\n", .{@offsetOf(webgpu_ffi.BufferDescriptor, "size")});
+    std.debug.print("BufferDescriptor.usage offset: {d}\\n", .{@offsetOf(webgpu_ffi.BufferDescriptor, "usage")});
+    std.debug.print("BufferDescriptor.mappedAtCreation offset: {d}\\n", .{@offsetOf(webgpu_ffi.BufferDescriptor, "mappedAtCreation")});
+    std.debug.print(" ---- \\n", .{});
+    std.debug.print("ShaderModuleDescriptor.label offset: {d}\\n", .{@offsetOf(webgpu_ffi.ShaderModuleDescriptor, "label")});
+    std.debug.print("ShaderModuleDescriptor.wgsl_code offset: {d}\\n", .{@offsetOf(webgpu_ffi.ShaderModuleDescriptor, "wgsl_code")});
+    std.debug.print(" ---- \\n", .{});
+    std.debug.print("ShaderModuleWGSLDescriptor.code_ptr offset: {d}\\n", .{@offsetOf(webgpu_ffi.ShaderModuleWGSLDescriptor, "code_ptr")});
+    std.debug.print("ShaderModuleWGSLDescriptor.code_len offset: {d}\\n", .{@offsetOf(webgpu_ffi.ShaderModuleWGSLDescriptor, "code_len")});
+    std.debug.print("--- End WebGPU Struct Offsets ---\\n", .{});
+
+    log("WebGPU Handler initialized successfully by main.zig (or initialization pending).");
 }
 
 // This function is called repeatedly from JavaScript (e.g., via requestAnimationFrame)
 export fn update_frame(delta_time_ms: f32) void {
+    if (!webgpu_handler.isInitialized()) {
+        if (webgpu_handler.hasFailed()) {
+            // log("WebGPU initialization failed, skipping update_frame logic."); // Log once
+        } else {
+            // log("WebGPU not yet initialized, skipping update_frame logic."); // Log once
+        }
+        return;
+    }
     frame_count += 1;
     log_frame_update_info(frame_count, delta_time_ms);
 
@@ -84,10 +100,6 @@ export fn update_frame(delta_time_ms: f32) void {
     if (input_handler.was_space_just_pressed()) {
         log("Spacebar was just pressed (detected in main.zig)!");
     }
-
-    // Defer deinitialization to when the Wasm module is about to be shut down if possible.
-    // For a continuous running app, deinit is usually not called from update_frame.
-    // If there was a specific shutdown signal from JS, then call webgpu_handler.deinit().
 }
 
 // Ensure that if the Wasm module has a way to be explicitly torn down by JS,
@@ -99,7 +111,7 @@ export fn update_frame(delta_time_ms: f32) void {
 // The original defer in _start in the previous main.zig version would deinit immediately after _start finishes.
 // We want WebGPU to stay alive for update_frame. So, deinit must be handled differently.
 
-pub export fn _wasm_shutdown() void { // Example: JS could call this on page unload or explicit stop
+pub export fn _wasm_shutdown() void {
     log("Wasm shutdown requested.");
     webgpu_handler.deinit();
     log("WebGPU handler deinitialized during Wasm shutdown.");
