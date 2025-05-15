@@ -1,5 +1,5 @@
 const input_handler = @import("input_handler.zig");
-const audio_handler = @import("audio_handler.zig");
+// const audio_handler = @import("audio_handler.zig"); // Removed
 
 // FFI import for JavaScript's console.log
 // This can remain here if main.zig also needs to log directly,
@@ -35,9 +35,7 @@ var frame_count: u32 = 0;
 // It replaces the previous `pub fn main() void` for JS interaction.
 pub export fn _start() void {
     log_main_app_info("_start() called. Application initialized.");
-    // input_handler.init_input_system(); // Removed: No specific init in input_handler.zig
-    // Core FFI state init is handled by audio_handler or could be called directly if needed.
-    audio_handler.init_audio_system();
+    // audio_handler.init_audio_system(); // Removed
 }
 
 // This function is called repeatedly from JavaScript (e.g., via requestAnimationFrame)
@@ -45,18 +43,21 @@ export fn update_frame(delta_time_ms: f32) void {
     frame_count += 1;
     log_frame_update(frame_count, delta_time_ms);
 
-    input_handler.update(); // Corrected: Was input_handler.process_events()
-    audio_handler.process_audio_events();
+    input_handler.update();
+    // audio_handler.process_audio_events(); // Removed
 
     if (input_handler.was_left_mouse_button_just_pressed()) {
-        js_log_string("Left mouse button just pressed!", 31);
-        audio_handler.trigger_explosion_sound();
+        // js_log_string("Left mouse button just pressed!", 31); // Removed
+        // audio_handler.trigger_explosion_sound(); // Removed
+        // For a base input demo, we can simply log via input_handler's internal logging
+        // or add a generic log_main_app_info here if specific main app action is taken.
+        log_main_app_info("Left mouse button was pressed (detected in main.zig).");
     }
 
-    // Check for right mouse button press to toggle background music
+    // Check for right mouse button press
     if (input_handler.was_right_mouse_button_just_pressed()) {
-        log_main_app_info("Right mouse button just pressed! Toggling background music...");
-        audio_handler.trigger_toggle_background_music();
+        // audio_handler.trigger_toggle_background_music(); // Removed
+        log_main_app_info("Right mouse button was pressed (detected in main.zig).");
     }
 
     // Check for spacebar press (using the specific helper from input_handler)

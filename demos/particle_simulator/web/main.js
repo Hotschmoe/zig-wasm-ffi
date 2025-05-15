@@ -3,7 +3,7 @@
 // Import all exports from the API-specific JS glue files.
 // These files are copied from the zig-wasm-ffi dependency to the 'dist' 
 // directory alongside this main.js and app.wasm by the build.zig script.
-import * as webaudio_glue from './webaudio.js';
+import * as webgpu_glue from './webgpu.js';
 import * as webinput_glue from './webinput.js';
 // If you add "webgpu" to `used_web_apis` in example/build.zig, 
 // you would also add: import * as webgpu_glue from './webgpu.js';
@@ -60,7 +60,7 @@ async function initWasm() {
             // Spread all functions from the imported glue modules.
             // The Zig FFI declarations (e.g., pub extern "env" fn zig_internal_on_mouse_move...)
             // must match the names of the functions exported by these JS modules.
-            ...webaudio_glue, // Example if webaudio was used
+            ...webgpu_glue, // Example if webaudio was used
             ...webinput_glue,  // This makes setupInputSystem, etc. from webinput.js available if they were FFI imports
                                // However, setupInputSystem itself is called from JS, not imported by Zig FFI.
                                // The spread here is for functions webinput.js might export *to be called by Zig*,
@@ -90,13 +90,13 @@ async function initWasm() {
             console.error("[Main.js] setupInputSystem not found in webinput_glue. Ensure js/webinput.js (from zig-wasm-ffi) exports it and is correctly copied to dist.");
         }
 
-        // Setup FFI glue for webaudio
-        if (webaudio_glue && webaudio_glue.setupWebAudio) {
-            console.log("[Main.js] Calling webaudio_glue.setupWebAudio...");
-            webaudio_glue.setupWebAudio(wasmInstance);
-        } else {
-            console.error("[Main.js] webaudio_glue.setupWebAudio not found or webaudio_glue module not loaded. Audio will not work.");
-        }
+        // Setup FFI glue for webgpu (can we move this to webgpu.js? and related to their own respective *.js files?)
+        // if (webgpu_glue && webgpu_glue.setupWebGPU) {
+        //     console.log("[Main.js] Calling webgpu_glue.setupWebGPU...");
+        //     webgpu_glue.setupWebGPU(wasmInstance);
+        // } else {
+        //     console.error("[Main.js] webgpu_glue.setupWebGPU not found or webgpu_glue module not loaded. WebGPU will not work.");
+        // }
 
         // Call the exported '_start' function from the Zig WASM module
         if (wasmInstance.exports && wasmInstance.exports._start) {
