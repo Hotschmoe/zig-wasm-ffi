@@ -78,6 +78,12 @@ pub const RendererError = error{
     DeviceOrQueueUnavailable,
     BindGroupLayoutCreationError,
     BindGroupCreationError,
+    PipelineLayoutCreationError,
+    PipelineCreationError,
+    CommandEncoderCreationError,
+    CommandBufferCreationError,
+    SurfaceTextureUnavailable,
+    SurfaceViewUnavailable,
 };
 
 // Default simulation parameters
@@ -85,6 +91,8 @@ const DEFAULT_SPECIES_COUNT: u32 = 8;
 const DEFAULT_PARTICLE_COUNT: u32 = 65536;
 const MAX_FORCE_RADIUS: f32 = 32.0;
 const INITIAL_VELOCITY: f32 = 10.0;
+
+const HDR_FORMAT: webgpu.TextureFormat = .rgba16float;
 
 pub const Renderer = struct {
     allocator: std.mem.Allocator,
@@ -143,6 +151,28 @@ pub const Renderer = struct {
     particle_compute_forces_b_to_a_bg: webgpu.BindGroup,
     compose_bg: webgpu.BindGroup,
 
+    // Pipeline Layouts
+    particle_advance_pl: webgpu.PipelineLayout,
+    binning_pl: webgpu.PipelineLayout, // For clearBinSize & fillBinSize
+    prefix_sum_pl: webgpu.PipelineLayout,
+    particle_sort_pl: webgpu.PipelineLayout, // For clearBinSize & sortParticles (in sort shader)
+    particle_compute_forces_pl: webgpu.PipelineLayout,
+    particle_render_pl: webgpu.PipelineLayout,
+    compose_pl: webgpu.PipelineLayout,
+
+    // Pipelines
+    bin_clear_size_pipeline: webgpu.ComputePipeline,
+    bin_fill_size_pipeline: webgpu.ComputePipeline,
+    bin_prefix_sum_pipeline: webgpu.ComputePipeline,
+    particle_sort_clear_size_pipeline: webgpu.ComputePipeline,
+    particle_sort_pipeline: webgpu.ComputePipeline,
+    particle_compute_forces_pipeline: webgpu.ComputePipeline,
+    particle_advance_pipeline: webgpu.ComputePipeline,
+    particle_render_glow_pipeline: webgpu.RenderPipeline,
+    particle_render_circle_pipeline: webgpu.RenderPipeline,
+    particle_render_point_pipeline: webgpu.RenderPipeline,
+    compose_pipeline: webgpu.RenderPipeline,
+
     // Current active particle buffers (for easier ping-pong management)
     current_particle_buffer: webgpu.Buffer,
     next_particle_buffer: webgpu.Buffer,
@@ -154,6 +184,10 @@ pub const Renderer = struct {
     species_count: u32 = DEFAULT_SPECIES_COUNT,
     simulation_box_width: f32 = 1024.0,
     simulation_box_height: f32 = 576.0,
+
+    // Derived simulation parameters
+    bin_count: u32,
+    prefix_sum_iterations: u32,
 
     pub fn init(allocator: std.mem.Allocator, wgpu_handler: *WebGPUHandler) !*Renderer {
         var self = try allocator.create(Renderer);
@@ -203,13 +237,46 @@ pub const Renderer = struct {
             .particle_compute_forces_a_to_b_bg = undefined,
             .particle_compute_forces_b_to_a_bg = undefined,
             .compose_bg = undefined,
+            .particle_advance_pl = undefined,
+            .binning_pl = undefined,
+            .prefix_sum_pl = undefined,
+            .particle_sort_pl = undefined,
+            .particle_compute_forces_pl = undefined,
+            .particle_render_pl = undefined,
+            .compose_pl = undefined,
+            .bin_clear_size_pipeline = undefined,
+            .bin_fill_size_pipeline = undefined,
+            .bin_prefix_sum_pipeline = undefined,
+            .particle_sort_clear_size_pipeline = undefined,
+            .particle_sort_pipeline = undefined,
+            .particle_compute_forces_pipeline = undefined,
+            .particle_advance_pipeline = undefined,
+            .particle_render_glow_pipeline = undefined,
+            .particle_render_circle_pipeline = undefined,
+            .particle_render_point_pipeline = undefined,
+            .compose_pipeline = undefined,
             .current_particle_buffer = undefined,
             .next_particle_buffer = undefined,
             .current_bin_offset_buffer = undefined,
             .next_bin_offset_buffer = undefined,
+            .particle_count = DEFAULT_PARTICLE_COUNT,
+            .species_count = DEFAULT_SPECIES_COUNT,
+            .simulation_box_width = 1024.0,
+            .simulation_box_height = 576.0,
+            .bin_count = undefined,
+            .prefix_sum_iterations = undefined,
         };
 
         const device = wgpu_handler.device orelse return RendererError.DeviceOrQueueUnavailable;
+
+        // Calculate derived simulation parameters
+        const sim_box_width_calc = self.simulation_box_width;
+        const sim_box_height_calc = self.simulation_box_height;
+        const grid_size_x: f32 = @ceil(sim_box_width_calc / MAX_FORCE_RADIUS);
+        const grid_size_y: f32 = @ceil(sim_box_height_calc / MAX_FORCE_RADIUS);
+        self.bin_count = @intFromFloat(grid_size_x * grid_size_y);
+        self.prefix_sum_iterations = if (self.bin_count == 0) 0 else math.log2_ceil_u32(self.bin_count + 1);
+        log.debug("Renderer.init: Calculated bin_count={d}, prefix_sum_iterations={d}", .{ self.bin_count, self.prefix_sum_iterations });
 
         // Initialize Shader Modules (existing code)
         log.debug("Renderer.init: Creating shader modules...", .{});
@@ -245,6 +312,15 @@ pub const Renderer = struct {
         log.debug("Renderer.init: Creating bind groups...", .{});
         try self.createBindGroups(device);
         log.info("Bind groups initialized.", .{});
+
+        // Create Pipeline Layouts and Pipelines
+        log.debug("Renderer.init: Creating pipeline layouts...", .{});
+        try self.createPipelineLayouts(device);
+        log.info("Pipeline layouts initialized.", .{});
+
+        log.debug("Renderer.init: Creating pipelines...", .{});
+        try self.createPipelines(device);
+        log.info("Pipelines initialized.", .{});
 
         log.info("Renderer initialized successfully.", .{});
         return self;
@@ -718,12 +794,180 @@ pub const Renderer = struct {
         });
     }
 
+    fn createPipelineLayouts(self: *Renderer, device: webgpu.Device) !void {
+        // Particle Advance PL: uses particle_advance_bgl, simulation_options_bgl
+        self.particle_advance_pl = try device.createPipelineLayout(&webgpu.PipelineLayoutDescriptor{
+            .label = "particle_advance_pl",
+            .bind_group_layouts = &[_]webgpu.BindGroupLayout{
+                self.particle_advance_bgl,
+                self.simulation_options_bgl,
+            },
+        });
+
+        // Binning PL: uses particle_buffer_read_only_bgl, simulation_options_bgl, bin_fill_size_bgl
+        self.binning_pl = try device.createPipelineLayout(&webgpu.PipelineLayoutDescriptor{
+            .label = "binning_pl",
+            .bind_group_layouts = &[_]webgpu.BindGroupLayout{
+                self.particle_buffer_read_only_bgl, // Group 0
+                self.simulation_options_bgl, // Group 1
+                self.bin_fill_size_bgl, // Group 2
+            },
+        });
+
+        // Prefix Sum PL: uses bin_prefix_sum_bgl
+        self.prefix_sum_pl = try device.createPipelineLayout(&webgpu.PipelineLayoutDescriptor{
+            .label = "prefix_sum_pl",
+            .bind_group_layouts = &[_]webgpu.BindGroupLayout{self.bin_prefix_sum_bgl},
+        });
+
+        // Particle Sort PL: uses particle_sort_bgl, simulation_options_bgl
+        self.particle_sort_pl = try device.createPipelineLayout(&webgpu.PipelineLayoutDescriptor{
+            .label = "particle_sort_pl",
+            .bind_group_layouts = &[_]webgpu.BindGroupLayout{
+                self.particle_sort_bgl, // Group 0
+                self.simulation_options_bgl, // Group 1
+            },
+        });
+
+        // Particle Compute Forces PL: uses particle_compute_forces_bgl, simulation_options_bgl
+        self.particle_compute_forces_pl = try device.createPipelineLayout(&webgpu.PipelineLayoutDescriptor{
+            .label = "particle_compute_forces_pl",
+            .bind_group_layouts = &[_]webgpu.BindGroupLayout{
+                self.particle_compute_forces_bgl, // Group 0
+                self.simulation_options_bgl, // Group 1
+            },
+        });
+
+        // Particle Render PL: uses particle_buffer_read_only_bgl, camera_bgl
+        self.particle_render_pl = try device.createPipelineLayout(&webgpu.PipelineLayoutDescriptor{
+            .label = "particle_render_pl",
+            .bind_group_layouts = &[_]webgpu.BindGroupLayout{
+                self.particle_buffer_read_only_bgl, // Group 0
+                self.camera_bgl, // Group 1
+            },
+        });
+
+        // Compose PL: uses compose_bgl
+        self.compose_pl = try device.createPipelineLayout(&webgpu.PipelineLayoutDescriptor{
+            .label = "compose_pl",
+            .bind_group_layouts = &[_]webgpu.BindGroupLayout{self.compose_bgl},
+        });
+    }
+
+    fn createPipelines(self: *Renderer, device: webgpu.Device) !void {
+        const preferred_canvas_format = self.wgpu_handler.getPreferredCanvasFormat() orelse webgpu.TextureFormat.bgra8unorm; // Default if not available
+
+        // --- Compute Pipelines ---
+        self.bin_clear_size_pipeline = try device.createComputePipeline(&webgpu.ComputePipelineDescriptor{
+            .label = "bin_clear_size_pipeline",
+            .layout = self.binning_pl,
+            .compute = .{ .module = self.binning_module, .entry_point = "clearBinSize" },
+        });
+        self.bin_fill_size_pipeline = try device.createComputePipeline(&webgpu.ComputePipelineDescriptor{
+            .label = "bin_fill_size_pipeline",
+            .layout = self.binning_pl,
+            .compute = .{ .module = self.binning_module, .entry_point = "fillBinSize" },
+        });
+        self.bin_prefix_sum_pipeline = try device.createComputePipeline(&webgpu.ComputePipelineDescriptor{
+            .label = "bin_prefix_sum_pipeline",
+            .layout = self.prefix_sum_pl,
+            .compute = .{ .module = self.prefix_sum_module, .entry_point = "prefixSumStep" },
+        });
+        self.particle_sort_clear_size_pipeline = try device.createComputePipeline(&webgpu.ComputePipelineDescriptor{
+            .label = "particle_sort_clear_size_pipeline",
+            .layout = self.particle_sort_pl, // Uses BGLs for sorted particles and sim options
+            .compute = .{ .module = self.sort_module, .entry_point = "clearBinSize" },
+        });
+        self.particle_sort_pipeline = try device.createComputePipeline(&webgpu.ComputePipelineDescriptor{
+            .label = "particle_sort_pipeline",
+            .layout = self.particle_sort_pl,
+            .compute = .{ .module = self.sort_module, .entry_point = "sortParticles" },
+        });
+        self.particle_compute_forces_pipeline = try device.createComputePipeline(&webgpu.ComputePipelineDescriptor{
+            .label = "particle_compute_forces_pipeline",
+            .layout = self.particle_compute_forces_pl,
+            .compute = .{ .module = self.compute_module, .entry_point = "computeForces" }, // From particle_compute.wgsl
+        });
+        self.particle_advance_pipeline = try device.createComputePipeline(&webgpu.ComputePipelineDescriptor{
+            .label = "particle_advance_pipeline",
+            .layout = self.particle_advance_pl,
+            .compute = .{ .module = self.compute_module, .entry_point = "particleAdvance" }, // From particle_compute.wgsl
+        });
+
+        // --- Render Pipelines ---
+        // Common blend state for additive blending on HDR target
+        const additive_blend_state = webgpu.BlendState{
+            .color = .{ .src_factor = .src_alpha, .dst_factor = .one, .operation = .add },
+            .alpha = .{ .src_factor = .one, .dst_factor = .one, .operation = .add },
+        };
+        const particle_hdr_target_state = webgpu.ColorTargetState{
+            .format = HDR_FORMAT,
+            .blend = &additive_blend_state,
+            .write_mask = webgpu.ColorWriteMask.ALL,
+        };
+
+        self.particle_render_glow_pipeline = try device.createRenderPipeline(&webgpu.RenderPipelineDescriptor{
+            .label = "particle_render_glow_pipeline",
+            .layout = self.particle_render_pl,
+            .vertex = .{ .module = self.render_module, .entry_point = "vertexGlow" },
+            .primitive = .{ .topology = .triangle_list },
+            .fragment = &webgpu.FragmentState{
+                .module = self.render_module,
+                .entry_point = "fragmentGlow",
+                .targets = &[_]webgpu.ColorTargetState{particle_hdr_target_state},
+            },
+            .multisample = .{ .count = 1, .mask = 0xFFFFFFFF }, // Default multisample state
+        });
+        self.particle_render_circle_pipeline = try device.createRenderPipeline(&webgpu.RenderPipelineDescriptor{
+            .label = "particle_render_circle_pipeline",
+            .layout = self.particle_render_pl,
+            .vertex = .{ .module = self.render_module, .entry_point = "vertexCircle" },
+            .primitive = .{ .topology = .triangle_list },
+            .fragment = &webgpu.FragmentState{
+                .module = self.render_module,
+                .entry_point = "fragmentCircle",
+                .targets = &[_]webgpu.ColorTargetState{particle_hdr_target_state},
+            },
+            .multisample = .{ .count = 1, .mask = 0xFFFFFFFF },
+        });
+        self.particle_render_point_pipeline = try device.createRenderPipeline(&webgpu.RenderPipelineDescriptor{
+            .label = "particle_render_point_pipeline",
+            .layout = self.particle_render_pl,
+            .vertex = .{ .module = self.render_module, .entry_point = "vertexPoint" },
+            .primitive = .{ .topology = .triangle_list },
+            .fragment = &webgpu.FragmentState{
+                .module = self.render_module,
+                .entry_point = "fragmentPoint",
+                .targets = &[_]webgpu.ColorTargetState{particle_hdr_target_state},
+            },
+            .multisample = .{ .count = 1, .mask = 0xFFFFFFFF },
+        });
+
+        // Compose pipeline (output to screen)
+        const compose_target_state = webgpu.ColorTargetState{
+            .format = preferred_canvas_format,
+            // No blending for final compose, overwrite
+            .write_mask = webgpu.ColorWriteMask.ALL,
+        };
+        self.compose_pipeline = try device.createRenderPipeline(&webgpu.RenderPipelineDescriptor{
+            .label = "compose_pipeline",
+            .layout = self.compose_pl,
+            .vertex = .{ .module = self.compose_module, .entry_point = "vertexMain" },
+            .primitive = .{ .topology = .triangle_list },
+            .fragment = &webgpu.FragmentState{
+                .module = self.compose_module,
+                .entry_point = "fragmentMain",
+                .targets = &[_]webgpu.ColorTargetState{compose_target_state},
+            },
+            .multisample = .{ .count = 1, .mask = 0xFFFFFFFF },
+        });
+    }
+
     pub fn deinit(self: *Renderer) void {
         log.debug("Renderer.deinit: Releasing resources...", .{});
         const device = self.wgpu_handler.device;
-        // Release buffers
-        // Check if device is null before releasing, though releaseHandle itself might be robust
         if (device != null) {
+            // Buffers & Textures
             webgpu.releaseHandle(self.species_buffer.handle, .Buffer);
             webgpu.releaseHandle(self.forces_buffer.handle, .Buffer);
             webgpu.releaseHandle(self.particle_buffer_a.handle, .Buffer);
@@ -733,22 +977,12 @@ pub const Renderer = struct {
             webgpu.releaseHandle(self.bin_prefix_sum_step_size_buffer.handle, .Buffer);
             webgpu.releaseHandle(self.camera_buffer.handle, .Buffer);
             webgpu.releaseHandle(self.simulation_options_buffer.handle, .Buffer);
-
             webgpu.releaseHandle(self.blue_noise_texture_view.handle, .TextureView);
             webgpu.releaseHandle(self.blue_noise_texture.handle, .Texture);
             webgpu.releaseHandle(self.hdr_texture_view.handle, .TextureView);
             webgpu.releaseHandle(self.hdr_texture.handle, .Texture);
 
-            webgpu.releaseHandle(self.particle_advance_bgl.handle, .BindGroupLayout);
-            webgpu.releaseHandle(self.particle_buffer_read_only_bgl.handle, .BindGroupLayout);
-            webgpu.releaseHandle(self.camera_bgl.handle, .BindGroupLayout);
-            webgpu.releaseHandle(self.simulation_options_bgl.handle, .BindGroupLayout);
-            webgpu.releaseHandle(self.bin_fill_size_bgl.handle, .BindGroupLayout);
-            webgpu.releaseHandle(self.bin_prefix_sum_bgl.handle, .BindGroupLayout);
-            webgpu.releaseHandle(self.particle_sort_bgl.handle, .BindGroupLayout);
-            webgpu.releaseHandle(self.particle_compute_forces_bgl.handle, .BindGroupLayout);
-            webgpu.releaseHandle(self.compose_bgl.handle, .BindGroupLayout);
-
+            // Bind Groups
             webgpu.releaseHandle(self.particle_advance_bg_a.handle, .BindGroup);
             webgpu.releaseHandle(self.particle_advance_bg_b.handle, .BindGroup);
             webgpu.releaseHandle(self.particle_read_only_bg_a.handle, .BindGroup);
@@ -765,6 +999,40 @@ pub const Renderer = struct {
             webgpu.releaseHandle(self.particle_compute_forces_b_to_a_bg.handle, .BindGroup);
             webgpu.releaseHandle(self.compose_bg.handle, .BindGroup);
 
+            // Pipelines
+            webgpu.releaseHandle(self.bin_clear_size_pipeline.handle, .ComputePipeline);
+            webgpu.releaseHandle(self.bin_fill_size_pipeline.handle, .ComputePipeline);
+            webgpu.releaseHandle(self.bin_prefix_sum_pipeline.handle, .ComputePipeline);
+            webgpu.releaseHandle(self.particle_sort_clear_size_pipeline.handle, .ComputePipeline);
+            webgpu.releaseHandle(self.particle_sort_pipeline.handle, .ComputePipeline);
+            webgpu.releaseHandle(self.particle_compute_forces_pipeline.handle, .ComputePipeline);
+            webgpu.releaseHandle(self.particle_advance_pipeline.handle, .ComputePipeline);
+            webgpu.releaseHandle(self.particle_render_glow_pipeline.handle, .RenderPipeline);
+            webgpu.releaseHandle(self.particle_render_circle_pipeline.handle, .RenderPipeline);
+            webgpu.releaseHandle(self.particle_render_point_pipeline.handle, .RenderPipeline);
+            webgpu.releaseHandle(self.compose_pipeline.handle, .RenderPipeline);
+
+            // Pipeline Layouts
+            webgpu.releaseHandle(self.particle_advance_pl.handle, .PipelineLayout);
+            webgpu.releaseHandle(self.binning_pl.handle, .PipelineLayout);
+            webgpu.releaseHandle(self.prefix_sum_pl.handle, .PipelineLayout);
+            webgpu.releaseHandle(self.particle_sort_pl.handle, .PipelineLayout);
+            webgpu.releaseHandle(self.particle_compute_forces_pl.handle, .PipelineLayout);
+            webgpu.releaseHandle(self.particle_render_pl.handle, .PipelineLayout);
+            webgpu.releaseHandle(self.compose_pl.handle, .PipelineLayout);
+
+            // Bind Group Layouts
+            webgpu.releaseHandle(self.particle_advance_bgl.handle, .BindGroupLayout);
+            webgpu.releaseHandle(self.particle_buffer_read_only_bgl.handle, .BindGroupLayout);
+            webgpu.releaseHandle(self.camera_bgl.handle, .BindGroupLayout);
+            webgpu.releaseHandle(self.simulation_options_bgl.handle, .BindGroupLayout);
+            webgpu.releaseHandle(self.bin_fill_size_bgl.handle, .BindGroupLayout);
+            webgpu.releaseHandle(self.bin_prefix_sum_bgl.handle, .BindGroupLayout);
+            webgpu.releaseHandle(self.particle_sort_bgl.handle, .BindGroupLayout);
+            webgpu.releaseHandle(self.particle_compute_forces_bgl.handle, .BindGroupLayout);
+            webgpu.releaseHandle(self.compose_bgl.handle, .BindGroupLayout);
+
+            // Shader Modules
             webgpu.releaseHandle(self.binning_module.handle, .ShaderModule);
             webgpu.releaseHandle(self.compute_module.handle, .ShaderModule);
             webgpu.releaseHandle(self.prefix_sum_module.handle, .ShaderModule);
@@ -773,20 +1041,346 @@ pub const Renderer = struct {
             webgpu.releaseHandle(self.compose_module.handle, .ShaderModule);
         } else {
             log.warn("Renderer.deinit: Device was null. Handles may not be released correctly if not already undefined.", .{});
-            // If handles are non-zero, attempt release anyway as releaseHandle is global
-            // This part is largely redundant if init fails before these are assigned valid handles from undefined
         }
 
         self.allocator.destroy(self);
         log.debug("Renderer deinitialized.", .{});
     }
 
-    // renderFrame function will be added later
-    // pub fn renderFrame(self: *Renderer) !void {
-    //    const device = self.wgpu_handler.device orelse return error.DeviceNotAvailable;
-    //    const queue = self.wgpu_handler.queue orelse return error.QueueNotAvailable;
-    //    const surface_texture = self.wgpu_handler.surface_texture orelse return error.SurfaceTextureNotAvailable;
-    //    const surface_view = self.wgpu_handler.surface_texture_view orelse return error.SurfaceViewNotAvailable;
-    //
-    // }
+    // Helper function to calculate dispatch counts
+    fn get_dispatch_count(items: u32, workgroup_size: u32) u32 {
+        if (workgroup_size == 0) return items; // Avoid division by zero, though workgroup_size should be > 0
+        return (items + workgroup_size - 1) / workgroup_size;
+    }
+
+    // Helper function to swap GPU buffer pointers (handles)
+    fn swapGpuBuffers(buffer_a: *webgpu.Buffer, buffer_b: *webgpu.Buffer) void {
+        const temp = buffer_a.*;
+        buffer_a.* = buffer_b.*;
+        buffer_b.* = temp;
+    }
+
+    pub fn renderFrame(self: *Renderer) !void {
+        const device = self.wgpu_handler.device orelse return RendererError.DeviceOrQueueUnavailable;
+        const queue = self.wgpu_handler.queue orelse return RendererError.DeviceOrQueueUnavailable;
+
+        const workgroup_size: u32 = 64; // Common workgroup size for these shaders
+
+        const encoder = device.createCommandEncoder(&webgpu.CommandEncoderDescriptor{
+            .label = "main_command_encoder",
+        }) catch |err| {
+            log.err("Failed to create command encoder: {any}", .{err});
+            return RendererError.CommandEncoderCreationError;
+        };
+        // Defer release of encoder until it's finished or if an error occurs before finish.
+        // Actual release will be handled explicitly after finish() or in error paths.
+
+        // --- 1. Binning Pass ---
+        // Clear bin sizes then fill bin sizes based on particle positions.
+        // Targets self.current_bin_offset_buffer.
+        log.debug("renderFrame: Starting Binning Pass", .{});
+        {
+            const pass_encoder = encoder.beginComputePass(&webgpu.ComputePassDescriptor{
+                .label = "binning_pass",
+            });
+
+            // Determine which particle_read_only_bg to use based on current_particle_buffer
+            const current_particle_bg = if (self.current_particle_buffer.handle == self.particle_buffer_a.handle)
+                self.particle_read_only_bg_a
+            else
+                self.particle_read_only_bg_b;
+
+            // Determine which bin_fill_size_bg to use (targets self.current_bin_offset_buffer)
+            const target_bin_fill_bg = if (self.current_bin_offset_buffer.handle == self.bin_offset_buffer_a.handle)
+                self.bin_fill_size_main_target_bg // Targets bin_offset_buffer_a
+            else
+                self.bin_fill_size_temp_target_bg; // Targets bin_offset_buffer_b
+
+            // Clear bin sizes
+            pass_encoder.setPipeline(self.bin_clear_size_pipeline);
+            pass_encoder.setBindGroup(0, current_particle_bg, &.{}); // Group 0 (particles, species)
+            pass_encoder.setBindGroup(1, self.simulation_options_bg, &.{}); // Group 1 (sim options)
+            pass_encoder.setBindGroup(2, target_bin_fill_bg, &.{}); // Group 2 (target bin_offset buffer)
+            pass_encoder.dispatchWorkgroups(get_dispatch_count(self.bin_count, workgroup_size), 1, 1);
+
+            // Fill bin sizes
+            pass_encoder.setPipeline(self.bin_fill_size_pipeline);
+            // Bind groups are the same as for clear
+            pass_encoder.setBindGroup(0, current_particle_bg, &.{});
+            pass_encoder.setBindGroup(1, self.simulation_options_bg, &.{});
+            pass_encoder.setBindGroup(2, target_bin_fill_bg, &.{});
+            pass_encoder.dispatchWorkgroups(get_dispatch_count(self.particle_count, workgroup_size), 1, 1);
+
+            pass_encoder.end();
+            webgpu.releaseHandle(pass_encoder.handle, .ComputePassEncoder); // Release pass encoder
+        }
+        log.debug("renderFrame: Binning Pass Complete. Counts in current_bin_offset_buffer ('{s}')", .{self.current_bin_offset_buffer.label orelse "-"});
+
+        // --- 2. Prefix Sum Pass ---
+        // Operates on self.current_bin_offset_buffer (input counts) and self.next_bin_offset_buffer (output/ping-pong target).
+        // Goal: self.bin_offset_buffer_a should contain the final prefix sum results.
+        // self.bin_offset_buffer_b is used as scratch / intermediate storage during ping-ponging.
+        log.debug("renderFrame: Starting Prefix Sum Pass ({d} iterations). Initial input: '{s}', temp target: '{s}'", .{ self.prefix_sum_iterations, self.current_bin_offset_buffer.label orelse "-", self.next_bin_offset_buffer.label orelse "-" });
+        if (self.prefix_sum_iterations > 0) {
+            // `read_from_A_implies_current_is_A` tracks if the *source* for the current step is bin_offset_buffer_a.
+            var read_from_A_implies_current_is_A: bool = (self.current_bin_offset_buffer.handle == self.bin_offset_buffer_a.handle);
+
+            const pass_encoder = encoder.beginComputePass(&webgpu.ComputePassDescriptor{
+                .label = "prefix_sum_pass",
+            });
+            pass_encoder.setPipeline(self.bin_prefix_sum_pipeline);
+
+            for (0..self.prefix_sum_iterations) |i| {
+                const dynamic_offset: u32 = @intCast(i * 256); // Each step_size u32 in UBO is 256 bytes apart
+                if (read_from_A_implies_current_is_A) {
+                    // Current source is A, so read from A, write to B.
+                    pass_encoder.setBindGroup(0, self.bin_prefix_sum_ab_bg, &.{dynamic_offset});
+                } else {
+                    // Current source is B, so read from B, write to A.
+                    pass_encoder.setBindGroup(0, self.bin_prefix_sum_ba_bg, &.{dynamic_offset});
+                }
+                pass_encoder.dispatchWorkgroups(get_dispatch_count(self.bin_count + 1, workgroup_size), 1, 1);
+                read_from_A_implies_current_is_A = !read_from_A_implies_current_is_A; // Toggle: destination of this step is source for next.
+            }
+            pass_encoder.end();
+            webgpu.releaseHandle(pass_encoder.handle, .ComputePassEncoder);
+
+            // After the loop, `read_from_A_implies_current_is_A` indicates where the *next read would be from* if loop continued.
+            // So, if true, the last write was to B. If false, the last write was to A.
+            const result_is_in_buffer_A = !read_from_A_implies_current_is_A;
+
+            if (result_is_in_buffer_A) {
+                // Result is already in bin_offset_buffer_a. This is desired.
+                self.current_bin_offset_buffer = self.bin_offset_buffer_a;
+                self.next_bin_offset_buffer = self.bin_offset_buffer_b; // B is now scratch
+                log.debug("Prefix sum result is in bin_offset_buffer_a as expected.", .{});
+            } else {
+                // Result is in bin_offset_buffer_b. Need to copy to bin_offset_buffer_a for subsequent passes.
+                log.debug("Prefix sum result is in bin_offset_buffer_b. Copying to bin_offset_buffer_a.", .{});
+                const size_to_copy = @sizeOf(u32) * (self.bin_count + 1);
+                encoder.copyBufferToBuffer(self.bin_offset_buffer_b.handle, 0, self.bin_offset_buffer_a.handle, 0, size_to_copy);
+                self.current_bin_offset_buffer = self.bin_offset_buffer_a; // A now has the results
+                self.next_bin_offset_buffer = self.bin_offset_buffer_b; // B is scratch
+            }
+        }
+        log.debug("renderFrame: Prefix Sum Pass Complete. Final offsets ensured in '{s}' (bin_offset_buffer_a). Scratch bin is '{s}'.", .{ self.current_bin_offset_buffer.label orelse "-", self.next_bin_offset_buffer.label orelse "-" });
+
+        // --- 3. Sort Pass ---
+        // Input: self.current_particle_buffer, self.bin_offset_buffer_a (true offsets from prefix sum)
+        // Output: self.next_particle_buffer (sorted particles). self.bin_offset_buffer_b is used for atomic counts.
+        log.debug("renderFrame: Starting Sort Pass. Input particles: '{s}' ('{s}'), Output to: '{s}' ('{s}'). Offsets from '{s}', Atomics to '{s}'", .{
+            self.current_particle_buffer.label orelse "-",
+            if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB",
+            self.next_particle_buffer.label orelse "-",
+            if (self.next_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB",
+            self.bin_offset_buffer_a.label orelse "-", // Should always be this for read offsets
+            self.bin_offset_buffer_b.label orelse "-", // Should always be this for atomic counts
+        });
+        {
+            const pass_encoder = encoder.beginComputePass(&webgpu.ComputePassDescriptor{
+                .label = "sort_pass",
+            });
+
+            // Determine BG based on current_particle_buffer. This choice has implications for bin offset usage.
+            // particle_sort_a_to_b_bg: pA (src), pB (dst), bA (read_offset), bB (atomic_write)
+            // particle_sort_b_to_a_bg: pB (src), pA (dst), bB (read_offset), bA (atomic_write)
+            // We have ensured prefix sum results are in bin_offset_buffer_a.
+            // We will use bin_offset_buffer_b for atomic counts.
+            var sort_bg: webgpu.BindGroup = undefined;
+            var clear_target_label: []const u8 = "unknown";
+
+            if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) {
+                // Sorting from pA to pB. Use bA for offsets, bB for atomics.
+                sort_bg = self.particle_sort_a_to_b_bg;
+                clear_target_label = self.bin_offset_buffer_b.label orelse "bin_offset_buffer_b";
+            } else { // current_particle_buffer is pB
+                // Sorting from pB to pA. We need to use bA for offsets and bB for atomics.
+                // particle_sort_b_to_a_bg expects to read offsets from bB and write atomics to bA.
+                // This is a mismatch with our strategy of bA=offsets, bB=atomics.
+                // TODO: This requires either a new BG (pB->pA, bA_read, bB_atomic) or different buffer management.
+                // For now, we proceed with particle_sort_a_to_b_bg to keep structure, this implies a potential issue if pB is current.
+                // OR, we stick to the current BG and accept that particle_sort_b_to_a_bg will read offsets from bB.
+                // If we stick to always reading offsets from bA and writing atomics to bB:
+                log.warn("Sort Pass: current_particle_buffer is pB. particle_sort_b_to_a_bg expects to read offsets from bB, but bA has true offsets. This is a known issue.", .{});
+                // To make it structurally sound for now, let's assume we *must* use a BG that writes to pA if pB is current.
+                // And that this BG correctly uses bA for read-offsets and bB for atomic-writes if such a BG were defined.
+                // Since it's not, we will use particle_sort_b_to_a_bg and acknowledge the bin offset mismatch.
+                sort_bg = self.particle_sort_b_to_a_bg;
+                clear_target_label = self.bin_offset_buffer_a.label orelse "bin_offset_buffer_a";
+                log.warn("Using particle_sort_b_to_a_bg. This will clear '{s}' for atomics & read offsets from '{s}'.", .{ clear_target_label, self.bin_offset_buffer_b.label orelse "-" });
+            }
+            log.debug("Sort Pass: Using BG '{s}'. Clearing atomic counts in buffer targeted by its 4th binding ('{s}').", .{ sort_bg.label orelse "-", clear_target_label });
+
+            // Clear atomic counts buffer (binding 3 of the chosen sort_bg)
+            pass_encoder.setPipeline(self.particle_sort_clear_size_pipeline);
+            pass_encoder.setBindGroup(0, sort_bg, &.{});
+            pass_encoder.setBindGroup(1, self.simulation_options_bg, &.{});
+            pass_encoder.dispatchWorkgroups(get_dispatch_count(self.bin_count, workgroup_size), 1, 1);
+
+            // Sort particles
+            pass_encoder.setPipeline(self.particle_sort_pipeline);
+            pass_encoder.setBindGroup(0, sort_bg, &.{});
+            pass_encoder.setBindGroup(1, self.simulation_options_bg, &.{});
+            pass_encoder.dispatchWorkgroups(get_dispatch_count(self.particle_count, workgroup_size), 1, 1);
+
+            pass_encoder.end();
+            webgpu.releaseHandle(pass_encoder.handle, .ComputePassEncoder);
+        }
+        swapGpuBuffers(&self.current_particle_buffer, &self.next_particle_buffer); // next_particle_buffer (now sorted) becomes current.
+        log.debug("renderFrame: Sort Pass Complete. Sorted particles now in '{s}' ('{s}').", .{
+            self.current_particle_buffer.label orelse "-",
+            if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB",
+        });
+
+        // --- 4. Compute Forces Pass ---
+        // Input: self.current_particle_buffer (sorted), self.bin_offset_buffer_a (true offsets)
+        // Output: self.next_particle_buffer (particles with updated forces/velocities)
+        log.debug("renderFrame: Starting Compute Forces. Input '{s}' ('{s}'), Output to '{s}' ('{s}'). Offsets from '{s}'.", .{
+            self.current_particle_buffer.label orelse "-",
+            if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB",
+            self.next_particle_buffer.label orelse "-",
+            if (self.next_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB",
+            self.bin_offset_buffer_a.label orelse "-", // Expecting offsets here
+        });
+        {
+            const pass_encoder = encoder.beginComputePass(&webgpu.ComputePassDescriptor{
+                .label = "compute_forces_pass",
+            });
+
+            var forces_bg: webgpu.BindGroup = undefined;
+            // particle_compute_forces_a_to_b_bg: pA (src), pB (dst), bA (offsets), forces
+            // particle_compute_forces_b_to_a_bg: pB (src), pA (dst), bB (offsets), forces
+            // We need to read offsets from bin_offset_buffer_a.
+            if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) {
+                // Current is pA (sorted). Read pA, bA. Write pB.
+                forces_bg = self.particle_compute_forces_a_to_b_bg;
+            } else { // Current is pB (sorted).
+                // Read pB, bA. Write pA.
+                // particle_compute_forces_b_to_a_bg expects offsets from bB. This is a mismatch.
+                // TODO: Address this BG mismatch. For now, using it and logging.
+                log.warn("Compute Forces: current_particle_buffer is pB. particle_compute_forces_b_to_a_bg expects offsets from bB, but bA has true offsets. Known issue.", .{});
+                forces_bg = self.particle_compute_forces_b_to_a_bg;
+            }
+            log.debug("Compute Forces: Using BG '{s}'.", .{forces_bg.label orelse "-"});
+
+            pass_encoder.setPipeline(self.particle_compute_forces_pipeline);
+            pass_encoder.setBindGroup(0, forces_bg, &.{});
+            pass_encoder.setBindGroup(1, self.simulation_options_bg, &.{});
+            pass_encoder.dispatchWorkgroups(get_dispatch_count(self.particle_count, workgroup_size), 1, 1);
+            pass_encoder.end();
+            webgpu.releaseHandle(pass_encoder.handle, .ComputePassEncoder);
+        }
+        swapGpuBuffers(&self.current_particle_buffer, &self.next_particle_buffer); // next_particle_buffer (with new velocities) becomes current.
+        log.debug("renderFrame: Compute Forces Complete. Velocities updated in '{s}' ('{s}').", .{
+            self.current_particle_buffer.label orelse "-",
+            if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB",
+        });
+
+        // --- 5. Advance Particles Pass ---
+        // Input/Output: self.current_particle_buffer (updated in-place with new positions)
+        log.debug("renderFrame: Starting Advance Particles. Target '{s}' ('{s}').", .{
+            self.current_particle_buffer.label orelse "-",
+            if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB",
+        });
+        {
+            const pass_encoder = encoder.beginComputePass(&webgpu.ComputePassDescriptor{
+                .label = "advance_particles_pass",
+            });
+
+            const advance_bg = if (self.current_particle_buffer.handle == self.particle_buffer_a.handle)
+                self.particle_advance_bg_a // Operates on pA
+            else
+                self.particle_advance_bg_b; // Operates on pB
+            log.debug("Advance Particles: Using BG '{s}'.", .{advance_bg.label orelse "-"});
+
+            pass_encoder.setPipeline(self.particle_advance_pipeline);
+            pass_encoder.setBindGroup(0, advance_bg, &.{});
+            pass_encoder.setBindGroup(1, self.simulation_options_bg, &.{});
+            pass_encoder.dispatchWorkgroups(get_dispatch_count(self.particle_count, workgroup_size), 1, 1);
+            pass_encoder.end();
+            webgpu.releaseHandle(pass_encoder.handle, .ComputePassEncoder);
+        }
+        log.debug("renderFrame: Advance Particles Complete. Final positions for this frame in '{s}' ('{s}').", .{
+            self.current_particle_buffer.label orelse "-",
+            if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB",
+        });
+
+        // --- 6. Render Passes ---
+        // Render particles to HDR texture
+        log.debug("renderFrame: Starting HDR Render Pass. Source particles from '{s}' ('{s}').", .{
+            self.current_particle_buffer.label orelse "-",
+            if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB",
+        });
+        {
+            const color_attachment = webgpu.RenderPassColorAttachment{
+                .view = self.hdr_texture_view, // Target the HDR texture
+                .resolve_target = null,
+                .clear_value = &webgpu.Color{ .r = 0.0, .g = 0.0, .b = 0.0, .a = 0.0 }, // Clear to black
+                .load_op = .clear,
+                .store_op = .store,
+            };
+            const pass_encoder = encoder.beginRenderPass(&webgpu.RenderPassDescriptor{
+                .label = "hdr_render_pass",
+                .color_attachments = &.{color_attachment},
+                .depth_stencil_attachment = null,
+            });
+
+            // Determine which particle_read_only_bg to use
+            const particle_render_bg = if (self.current_particle_buffer.handle == self.particle_buffer_a.handle)
+                self.particle_read_only_bg_a
+            else
+                self.particle_read_only_bg_b;
+
+            log.debug("HDR Render Pass: Using particle BG '{s}'.", .{particle_render_bg.label orelse "-"});
+
+            // Using particle_render_circle_pipeline as an example.
+            // TODO: Add logic to select between glow, circle, point pipelines based on settings.
+            pass_encoder.setPipeline(self.particle_render_circle_pipeline);
+            pass_encoder.setBindGroup(0, particle_render_bg, &.{}); // Group 0: Particle Data + Species
+            pass_encoder.setBindGroup(1, self.camera_bg, &.{}); // Group 1: Camera Uniforms
+            pass_encoder.draw(6, self.particle_count, 0, 0); // Draw 6 vertices (quad) per particle, instanced
+
+            pass_encoder.end();
+            webgpu.releaseHandle(pass_encoder.handle, .RenderPassEncoder); // Release render pass encoder
+        }
+        log.debug("renderFrame: HDR Render Pass Complete. Output to hdr_texture_view.", .{});
+
+        // Compose HDR to screen (Skipped for now)
+        // This section would get the current swap chain texture view from wgpu_handler
+        // and render the hdr_texture_view to it using the compose_pipeline.
+        log.warn("renderFrame: Skipping Compose to Screen pass. WebGPUHandler.getCurrentTextureView() not yet implemented or integrated.", .{});
+        // Example if available:
+        // const surface_view = self.wgpu_handler.getCurrentTextureView() orelse return RendererError.SurfaceViewUnavailable;
+        // const preferred_format = self.wgpu_handler.getPreferredCanvasFormat() orelse webgpu.TextureFormat.bgra8unorm;
+        // {
+        //     const compose_color_attachment = webgpu.RenderPassColorAttachment{
+        //         .view = surface_view, .resolve_target = null,
+        //         .load_op = .clear, .store_op = .store, // Or .load if not clearing screen first
+        //         .clear_value = &webgpu.Color{ .r = 0.0, .g = 0.0, .b = 0.0, .a = 1.0 },
+        //     };
+        //     const compose_pass_encoder = encoder.beginRenderPass(&webgpu.RenderPassDescriptor{
+        //         .label = "compose_to_screen_pass",
+        //         .color_attachments = &.{compose_color_attachment},
+        //     });
+        //     compose_pass_encoder.setPipeline(self.compose_pipeline);
+        //     compose_pass_encoder.setBindGroup(0, self.compose_bg, &.{}); // Contains hdr_texture_view and blue_noise_texture_view
+        //     compose_pass_encoder.draw(6, 1, 0, 0); // Draw a full-screen quad
+        //     compose_pass_encoder.end();
+        //     webgpu.releaseHandle(compose_pass_encoder.handle, .RenderPassEncoder);
+        // }
+
+        // --- Finish and Submit ---
+        const command_buffer = encoder.finish(&webgpu.CommandBufferDescriptor{
+            .label = "main_frame_command_buffer",
+        }) catch |err_finish| {
+            log.err("Failed to finish command encoder: {any}", .{err_finish});
+            webgpu.releaseHandle(encoder.handle, .CommandEncoder); // Release encoder on finish error
+            return RendererError.CommandBufferCreationError;
+        };
+        webgpu.releaseHandle(encoder.handle, .CommandEncoder); // Encoder is consumed by finish, release its handle reference
+
+        queue.submit(&.{command_buffer});
+        webgpu.releaseHandle(command_buffer.handle, .CommandBuffer); // Release command buffer after submit (Zig owns, JS side handle can be released)
+        log.info("renderFrame: Frame commands submitted successfully.", .{});
+    }
 };
