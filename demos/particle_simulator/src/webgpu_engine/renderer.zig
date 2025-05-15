@@ -1,7 +1,7 @@
 const std = @import("std");
 const webgpu = @import("zig-wasm-ffi").webgpu;
 const WebGPUHandler = @import("webgpu_handler.zig").WebGPUHandler;
-const log = @import("zig-wasm-ffi").utils.log;
+const webutils = @import("zig-wasm-ffi").webutils; // Changed from: const log = @import("zig-wasm-ffi").utils.log;
 const math = std.math;
 const random = std.crypto.random;
 
@@ -276,27 +276,27 @@ pub const Renderer = struct {
         const grid_size_y: f32 = @ceil(sim_box_height_calc / MAX_FORCE_RADIUS);
         self.bin_count = @intFromFloat(grid_size_x * grid_size_y);
         self.prefix_sum_iterations = if (self.bin_count == 0) 0 else math.log2_ceil_u32(self.bin_count + 1);
-        log.debug("Renderer.init: Calculated bin_count={d}, prefix_sum_iterations={d}", .{ self.bin_count, self.prefix_sum_iterations });
+        webutils.log("DEBUG: Renderer.init: Calculated bin_count=" ++ "TODO_INT_TO_STRING" ++ ", prefix_sum_iterations=" ++ "TODO_INT_TO_STRING"); // Adjusted log
 
         // Initialize Shader Modules (existing code)
-        log.debug("Renderer.init: Creating shader modules...", .{});
+        webutils.log("DEBUG: Renderer.init: Creating shader modules..."); // Adjusted log
         self.binning_module = try self.createShaderModule(device, particle_binning_wgsl, "particle_binning_shader");
         self.compute_module = try self.createShaderModule(device, particle_compute_wgsl, "particle_compute_shader");
         self.prefix_sum_module = try self.createShaderModule(device, particle_prefix_sum_wgsl, "particle_prefix_sum_shader");
         self.render_module = try self.createShaderModule(device, particle_render_wgsl, "particle_render_shader");
         self.sort_module = try self.createShaderModule(device, particle_sort_wgsl, "particle_sort_shader");
         self.compose_module = try self.createShaderModule(device, particle_compose_wgsl, "particle_compose_shader");
-        log.info("Shader modules initialized.", .{});
+        webutils.log("INFO: Shader modules initialized."); // Adjusted log
 
         // Initialize Buffers
-        log.debug("Renderer.init: Creating buffers...", .{});
+        webutils.log("DEBUG: Renderer.init: Creating buffers..."); // Adjusted log
         try self.createAndInitializeBuffers(device);
-        log.info("Buffers initialized.", .{});
+        webutils.log("INFO: Buffers initialized."); // Adjusted log
 
         // Initialize Textures (Placeholders for now)
-        log.debug("Renderer.init: Creating textures...", .{});
+        webutils.log("DEBUG: Renderer.init: Creating textures..."); // Adjusted log
         try self.createPlaceholderTextures(device);
-        log.info("Placeholder textures initialized.", .{});
+        webutils.log("INFO: Placeholder textures initialized."); // Adjusted log
 
         // Setup ping-pong buffers initial state
         self.current_particle_buffer = self.particle_buffer_a;
@@ -304,25 +304,25 @@ pub const Renderer = struct {
         self.current_bin_offset_buffer = self.bin_offset_buffer_a;
         self.next_bin_offset_buffer = self.bin_offset_buffer_b;
 
-        log.debug("Renderer.init: Creating bind group layouts...", .{});
+        webutils.log("DEBUG: Renderer.init: Creating bind group layouts..."); // Adjusted log
         try self.createBindGroupLayouts(device);
-        log.info("Bind group layouts initialized.", .{});
+        webutils.log("INFO: Bind group layouts initialized."); // Adjusted log
 
         // Create Bind Groups
-        log.debug("Renderer.init: Creating bind groups...", .{});
+        webutils.log("DEBUG: Renderer.init: Creating bind groups..."); // Adjusted log
         try self.createBindGroups(device);
-        log.info("Bind groups initialized.", .{});
+        webutils.log("INFO: Bind groups initialized."); // Adjusted log
 
         // Create Pipeline Layouts and Pipelines
-        log.debug("Renderer.init: Creating pipeline layouts...", .{});
+        webutils.log("DEBUG: Renderer.init: Creating pipeline layouts..."); // Adjusted log
         try self.createPipelineLayouts(device);
-        log.info("Pipeline layouts initialized.", .{});
+        webutils.log("INFO: Pipeline layouts initialized."); // Adjusted log
 
-        log.debug("Renderer.init: Creating pipelines...", .{});
+        webutils.log("DEBUG: Renderer.init: Creating pipelines..."); // Adjusted log
         try self.createPipelines(device);
-        log.info("Pipelines initialized.", .{});
+        webutils.log("INFO: Pipelines initialized."); // Adjusted log
 
-        log.info("Renderer initialized successfully.", .{});
+        webutils.log("INFO: Renderer initialized successfully."); // Adjusted log
         return self;
     }
 
@@ -333,7 +333,7 @@ pub const Renderer = struct {
             .code = code,
         };
         return webgpu.deviceCreateShaderModule(device, &desc) catch |err| {
-            log.err("Failed to create shader module '{s}': {any}", .{ label, err });
+            webutils.log("ERROR: Failed to create shader module '" ++ label ++ "': " ++ @errorName(err)); // Adjusted log
             return RendererError.ShaderModuleCreationError;
         };
     }
@@ -736,7 +736,7 @@ pub const Renderer = struct {
         });
 
         // Particle Sort BGs
-        // sort_a_to_b: particles_a (src), particles_b (dst), bin_offset_a (read offsets), bin_offset_b (write atomic counts)
+        // sort_a_to_b: particles_a (src), particles_b (dst), bin_offset_a (read offsets), bin_offset_b (atomic_write)
         self.particle_sort_a_to_b_bg = try device.createBindGroup(&webgpu.BindGroupDescriptor{
             .label = "particle_sort_a_to_b_bg",
             .layout = self.particle_sort_bgl,
@@ -747,7 +747,7 @@ pub const Renderer = struct {
                 .{ .binding = 3, .resource = .{ .buffer = self.bin_offset_buffer_b.handle } }, // Bin atomic counts (written here)
             },
         });
-        // sort_b_to_a: particles_b (src), particles_a (dst), bin_offset_b (read offsets), bin_offset_a (write atomic counts)
+        // sort_b_to_a: particles_b (src), particles_a (dst), bin_offset_b (read offsets), bin_offset_a (atomic_write)
         self.particle_sort_b_to_a_bg = try device.createBindGroup(&webgpu.BindGroupDescriptor{
             .label = "particle_sort_b_to_a_bg",
             .layout = self.particle_sort_bgl,
@@ -964,7 +964,7 @@ pub const Renderer = struct {
     }
 
     pub fn deinit(self: *Renderer) void {
-        log.debug("Renderer.deinit: Releasing resources...", .{});
+        webutils.log("DEBUG: Renderer.deinit: Releasing resources..."); // Adjusted log
         const device = self.wgpu_handler.device;
         if (device != null) {
             // Buffers & Textures
@@ -1040,11 +1040,11 @@ pub const Renderer = struct {
             webgpu.releaseHandle(self.sort_module.handle, .ShaderModule);
             webgpu.releaseHandle(self.compose_module.handle, .ShaderModule);
         } else {
-            log.warn("Renderer.deinit: Device was null. Handles may not be released correctly if not already undefined.", .{});
+            webutils.log("WARN: Renderer.deinit: Device was null. Handles may not be released correctly if not already undefined."); // Adjusted log
         }
 
         self.allocator.destroy(self);
-        log.debug("Renderer deinitialized.", .{});
+        webutils.log("DEBUG: Renderer deinitialized."); // Adjusted log
     }
 
     // Helper function to calculate dispatch counts
@@ -1069,7 +1069,7 @@ pub const Renderer = struct {
         const encoder = device.createCommandEncoder(&webgpu.CommandEncoderDescriptor{
             .label = "main_command_encoder",
         }) catch |err| {
-            log.err("Failed to create command encoder: {any}", .{err});
+            webutils.log("ERROR: Failed to create command encoder: " ++ @errorName(err)); // Adjusted log
             return RendererError.CommandEncoderCreationError;
         };
         // Defer release of encoder until it's finished or if an error occurs before finish.
@@ -1078,7 +1078,7 @@ pub const Renderer = struct {
         // --- 1. Binning Pass ---
         // Clear bin sizes then fill bin sizes based on particle positions.
         // Targets self.current_bin_offset_buffer.
-        log.debug("renderFrame: Starting Binning Pass", .{});
+        webutils.log("DEBUG: renderFrame: Starting Binning Pass"); // Adjusted log
         {
             const pass_encoder = encoder.beginComputePass(&webgpu.ComputePassDescriptor{
                 .label = "binning_pass",
@@ -1114,13 +1114,13 @@ pub const Renderer = struct {
             pass_encoder.end();
             webgpu.releaseHandle(pass_encoder.handle, .ComputePassEncoder); // Release pass encoder
         }
-        log.debug("renderFrame: Binning Pass Complete. Counts in current_bin_offset_buffer ('{s}')", .{self.current_bin_offset_buffer.label orelse "-"});
+        webutils.log("DEBUG: renderFrame: Binning Pass Complete. Counts in current_bin_offset_buffer ('" ++ (self.current_bin_offset_buffer.label orelse "-") ++ "')"); // Adjusted log
 
         // --- 2. Prefix Sum Pass ---
         // Operates on self.current_bin_offset_buffer (input counts) and self.next_bin_offset_buffer (output/ping-pong target).
         // Goal: self.bin_offset_buffer_a should contain the final prefix sum results.
         // self.bin_offset_buffer_b is used as scratch / intermediate storage during ping-ponging.
-        log.debug("renderFrame: Starting Prefix Sum Pass ({d} iterations). Initial input: '{s}', temp target: '{s}'", .{ self.prefix_sum_iterations, self.current_bin_offset_buffer.label orelse "-", self.next_bin_offset_buffer.label orelse "-" });
+        webutils.log("DEBUG: renderFrame: Starting Prefix Sum Pass (" ++ "TODO_INT_TO_STRING" ++ " iterations). Initial input: '" ++ (self.current_bin_offset_buffer.label orelse "-") ++ "', temp target: '" ++ (self.next_bin_offset_buffer.label orelse "-") ++ "'"); // Adjusted log
         if (self.prefix_sum_iterations > 0) {
             // `read_from_A_implies_current_is_A` tracks if the *source* for the current step is bin_offset_buffer_a.
             var read_from_A_implies_current_is_A: bool = (self.current_bin_offset_buffer.handle == self.bin_offset_buffer_a.handle);
@@ -1153,29 +1153,22 @@ pub const Renderer = struct {
                 // Result is already in bin_offset_buffer_a. This is desired.
                 self.current_bin_offset_buffer = self.bin_offset_buffer_a;
                 self.next_bin_offset_buffer = self.bin_offset_buffer_b; // B is now scratch
-                log.debug("Prefix sum result is in bin_offset_buffer_a as expected.", .{});
+                webutils.log("DEBUG: Prefix sum result is in bin_offset_buffer_a as expected."); // Adjusted log
             } else {
                 // Result is in bin_offset_buffer_b. Need to copy to bin_offset_buffer_a for subsequent passes.
-                log.debug("Prefix sum result is in bin_offset_buffer_b. Copying to bin_offset_buffer_a.", .{});
+                webutils.log("DEBUG: Prefix sum result is in bin_offset_buffer_b. Copying to bin_offset_buffer_a."); // Adjusted log
                 const size_to_copy = @sizeOf(u32) * (self.bin_count + 1);
                 encoder.copyBufferToBuffer(self.bin_offset_buffer_b.handle, 0, self.bin_offset_buffer_a.handle, 0, size_to_copy);
                 self.current_bin_offset_buffer = self.bin_offset_buffer_a; // A now has the results
                 self.next_bin_offset_buffer = self.bin_offset_buffer_b; // B is scratch
             }
         }
-        log.debug("renderFrame: Prefix Sum Pass Complete. Final offsets ensured in '{s}' (bin_offset_buffer_a). Scratch bin is '{s}'.", .{ self.current_bin_offset_buffer.label orelse "-", self.next_bin_offset_buffer.label orelse "-" });
+        webutils.log("DEBUG: renderFrame: Prefix Sum Pass Complete. Final offsets ensured in '" ++ (self.current_bin_offset_buffer.label orelse "-") ++ "' (bin_offset_buffer_a). Scratch bin is '" ++ (self.next_bin_offset_buffer.label orelse "-") ++ "'."); // Adjusted log
 
         // --- 3. Sort Pass ---
         // Input: self.current_particle_buffer, self.bin_offset_buffer_a (true offsets from prefix sum)
         // Output: self.next_particle_buffer (sorted particles). self.bin_offset_buffer_b is used for atomic counts.
-        log.debug("renderFrame: Starting Sort Pass. Input particles: '{s}' ('{s}'), Output to: '{s}' ('{s}'). Offsets from '{s}', Atomics to '{s}'", .{
-            self.current_particle_buffer.label orelse "-",
-            if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB",
-            self.next_particle_buffer.label orelse "-",
-            if (self.next_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB",
-            self.bin_offset_buffer_a.label orelse "-", // Should always be this for read offsets
-            self.bin_offset_buffer_b.label orelse "-", // Should always be this for atomic counts
-        });
+        webutils.log("DEBUG: renderFrame: Starting Sort Pass. Input particles: '" ++ (self.current_particle_buffer.label orelse "-") ++ "' ('" ++ (if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB") ++ "'), Output to: '" ++ (self.next_particle_buffer.label orelse "-") ++ "' ('" ++ (if (self.next_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB") ++ "'). Offsets from '" ++ (self.bin_offset_buffer_a.label orelse "-") ++ "', Atomics to '" ++ (self.bin_offset_buffer_b.label orelse "-") ++ "'"); // Adjusted log
         {
             const pass_encoder = encoder.beginComputePass(&webgpu.ComputePassDescriptor{
                 .label = "sort_pass",
@@ -1201,15 +1194,15 @@ pub const Renderer = struct {
                 // For now, we proceed with particle_sort_a_to_b_bg to keep structure, this implies a potential issue if pB is current.
                 // OR, we stick to the current BG and accept that particle_sort_b_to_a_bg will read offsets from bB.
                 // If we stick to always reading offsets from bA and writing atomics to bB:
-                log.warn("Sort Pass: current_particle_buffer is pB. particle_sort_b_to_a_bg expects to read offsets from bB, but bA has true offsets. This is a known issue.", .{});
+                webutils.log("WARN: Sort Pass: current_particle_buffer is pB. particle_sort_b_to_a_bg expects to read offsets from bB, but bA has true offsets. This is a known issue."); // Adjusted log
                 // To make it structurally sound for now, let's assume we *must* use a BG that writes to pA if pB is current.
                 // And that this BG correctly uses bA for read-offsets and bB for atomic-writes if such a BG were defined.
                 // Since it's not, we will use particle_sort_b_to_a_bg and acknowledge the bin offset mismatch.
                 sort_bg = self.particle_sort_b_to_a_bg;
                 clear_target_label = self.bin_offset_buffer_a.label orelse "bin_offset_buffer_a";
-                log.warn("Using particle_sort_b_to_a_bg. This will clear '{s}' for atomics & read offsets from '{s}'.", .{ clear_target_label, self.bin_offset_buffer_b.label orelse "-" });
+                webutils.log("WARN: Using particle_sort_b_to_a_bg. This will clear '" ++ clear_target_label ++ "' for atomics & read offsets from '" ++ (self.bin_offset_buffer_b.label orelse "-") ++ "'."); // Adjusted log
             }
-            log.debug("Sort Pass: Using BG '{s}'. Clearing atomic counts in buffer targeted by its 4th binding ('{s}').", .{ sort_bg.label orelse "-", clear_target_label });
+            webutils.log("DEBUG: Sort Pass: Using BG '" ++ (sort_bg.label orelse "-") ++ "'. Clearing atomic counts in buffer targeted by its 4th binding ('" ++ clear_target_label ++ "')."); // Adjusted log
 
             // Clear atomic counts buffer (binding 3 of the chosen sort_bg)
             pass_encoder.setPipeline(self.particle_sort_clear_size_pipeline);
@@ -1227,21 +1220,12 @@ pub const Renderer = struct {
             webgpu.releaseHandle(pass_encoder.handle, .ComputePassEncoder);
         }
         swapGpuBuffers(&self.current_particle_buffer, &self.next_particle_buffer); // next_particle_buffer (now sorted) becomes current.
-        log.debug("renderFrame: Sort Pass Complete. Sorted particles now in '{s}' ('{s}').", .{
-            self.current_particle_buffer.label orelse "-",
-            if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB",
-        });
+        webutils.log("DEBUG: renderFrame: Sort Pass Complete. Sorted particles now in '" ++ (self.current_particle_buffer.label orelse "-") ++ "' ('" ++ (if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB") ++ "')."); // Adjusted log
 
         // --- 4. Compute Forces Pass ---
         // Input: self.current_particle_buffer (sorted), self.bin_offset_buffer_a (true offsets)
         // Output: self.next_particle_buffer (particles with updated forces/velocities)
-        log.debug("renderFrame: Starting Compute Forces. Input '{s}' ('{s}'), Output to '{s}' ('{s}'). Offsets from '{s}'.", .{
-            self.current_particle_buffer.label orelse "-",
-            if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB",
-            self.next_particle_buffer.label orelse "-",
-            if (self.next_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB",
-            self.bin_offset_buffer_a.label orelse "-", // Expecting offsets here
-        });
+        webutils.log("DEBUG: renderFrame: Starting Compute Forces. Input '" ++ (self.current_particle_buffer.label orelse "-") ++ "' ('" ++ (if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB") ++ "'), Output to '" ++ (self.next_particle_buffer.label orelse "-") ++ "' ('" ++ (if (self.next_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB") ++ "'). Offsets from '" ++ (self.bin_offset_buffer_a.label orelse "-") ++ "'."); // Adjusted log
         {
             const pass_encoder = encoder.beginComputePass(&webgpu.ComputePassDescriptor{
                 .label = "compute_forces_pass",
@@ -1258,10 +1242,10 @@ pub const Renderer = struct {
                 // Read pB, bA. Write pA.
                 // particle_compute_forces_b_to_a_bg expects offsets from bB. This is a mismatch.
                 // TODO: Address this BG mismatch. For now, using it and logging.
-                log.warn("Compute Forces: current_particle_buffer is pB. particle_compute_forces_b_to_a_bg expects offsets from bB, but bA has true offsets. Known issue.", .{});
+                webutils.log("WARN: Compute Forces: current_particle_buffer is pB. particle_compute_forces_b_to_a_bg expects offsets from bB, but bA has true offsets. Known issue."); // Adjusted log
                 forces_bg = self.particle_compute_forces_b_to_a_bg;
             }
-            log.debug("Compute Forces: Using BG '{s}'.", .{forces_bg.label orelse "-"});
+            webutils.log("DEBUG: Compute Forces: Using BG '" ++ (forces_bg.label orelse "-") ++ "'."); // Adjusted log
 
             pass_encoder.setPipeline(self.particle_compute_forces_pipeline);
             pass_encoder.setBindGroup(0, forces_bg, &.{});
@@ -1271,17 +1255,11 @@ pub const Renderer = struct {
             webgpu.releaseHandle(pass_encoder.handle, .ComputePassEncoder);
         }
         swapGpuBuffers(&self.current_particle_buffer, &self.next_particle_buffer); // next_particle_buffer (with new velocities) becomes current.
-        log.debug("renderFrame: Compute Forces Complete. Velocities updated in '{s}' ('{s}').", .{
-            self.current_particle_buffer.label orelse "-",
-            if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB",
-        });
+        webutils.log("DEBUG: renderFrame: Compute Forces Complete. Velocities updated in '" ++ (self.current_particle_buffer.label orelse "-") ++ "' ('" ++ (if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB") ++ "')."); // Adjusted log
 
         // --- 5. Advance Particles Pass ---
         // Input/Output: self.current_particle_buffer (updated in-place with new positions)
-        log.debug("renderFrame: Starting Advance Particles. Target '{s}' ('{s}').", .{
-            self.current_particle_buffer.label orelse "-",
-            if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB",
-        });
+        webutils.log("DEBUG: renderFrame: Starting Advance Particles. Target '" ++ (self.current_particle_buffer.label orelse "-") ++ "' ('" ++ (if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB") ++ "')."); // Adjusted log
         {
             const pass_encoder = encoder.beginComputePass(&webgpu.ComputePassDescriptor{
                 .label = "advance_particles_pass",
@@ -1291,7 +1269,7 @@ pub const Renderer = struct {
                 self.particle_advance_bg_a // Operates on pA
             else
                 self.particle_advance_bg_b; // Operates on pB
-            log.debug("Advance Particles: Using BG '{s}'.", .{advance_bg.label orelse "-"});
+            webutils.log("DEBUG: Advance Particles: Using BG '" ++ (advance_bg.label orelse "-") ++ "'."); // Adjusted log
 
             pass_encoder.setPipeline(self.particle_advance_pipeline);
             pass_encoder.setBindGroup(0, advance_bg, &.{});
@@ -1300,17 +1278,11 @@ pub const Renderer = struct {
             pass_encoder.end();
             webgpu.releaseHandle(pass_encoder.handle, .ComputePassEncoder);
         }
-        log.debug("renderFrame: Advance Particles Complete. Final positions for this frame in '{s}' ('{s}').", .{
-            self.current_particle_buffer.label orelse "-",
-            if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB",
-        });
+        webutils.log("DEBUG: renderFrame: Advance Particles Complete. Final positions for this frame in '" ++ (self.current_particle_buffer.label orelse "-") ++ "' ('" ++ (if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB") ++ "')."); // Adjusted log
 
         // --- 6. Render Passes ---
         // Render particles to HDR texture
-        log.debug("renderFrame: Starting HDR Render Pass. Source particles from '{s}' ('{s}').", .{
-            self.current_particle_buffer.label orelse "-",
-            if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB",
-        });
+        webutils.log("DEBUG: renderFrame: Starting HDR Render Pass. Source particles from '" ++ (self.current_particle_buffer.label orelse "-") ++ "' ('" ++ (if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB") ++ "')."); // Adjusted log
         {
             const color_attachment = webgpu.RenderPassColorAttachment{
                 .view = self.hdr_texture_view, // Target the HDR texture
@@ -1331,7 +1303,7 @@ pub const Renderer = struct {
             else
                 self.particle_read_only_bg_b;
 
-            log.debug("HDR Render Pass: Using particle BG '{s}'.", .{particle_render_bg.label orelse "-"});
+            webutils.log("DEBUG: HDR Render Pass: Using particle BG '" ++ (particle_render_bg.label orelse "-") ++ "'."); // Adjusted log
 
             // Using particle_render_circle_pipeline as an example.
             // TODO: Add logic to select between glow, circle, point pipelines based on settings.
@@ -1343,12 +1315,12 @@ pub const Renderer = struct {
             pass_encoder.end();
             webgpu.releaseHandle(pass_encoder.handle, .RenderPassEncoder); // Release render pass encoder
         }
-        log.debug("renderFrame: HDR Render Pass Complete. Output to hdr_texture_view.", .{});
+        webutils.log("DEBUG: renderFrame: HDR Render Pass Complete. Output to hdr_texture_view."); // Adjusted log
 
         // Compose HDR to screen (Skipped for now)
         // This section would get the current swap chain texture view from wgpu_handler
         // and render the hdr_texture_view to it using the compose_pipeline.
-        log.warn("renderFrame: Skipping Compose to Screen pass. WebGPUHandler.getCurrentTextureView() not yet implemented or integrated.", .{});
+        webutils.log("WARN: renderFrame: Skipping Compose to Screen pass. WebGPUHandler.getCurrentTextureView() not yet implemented or integrated."); // Adjusted log
         // Example if available:
         // const surface_view = self.wgpu_handler.getCurrentTextureView() orelse return RendererError.SurfaceViewUnavailable;
         // const preferred_format = self.wgpu_handler.getPreferredCanvasFormat() orelse webgpu.TextureFormat.bgra8unorm;
@@ -1373,7 +1345,7 @@ pub const Renderer = struct {
         const command_buffer = encoder.finish(&webgpu.CommandBufferDescriptor{
             .label = "main_frame_command_buffer",
         }) catch |err_finish| {
-            log.err("Failed to finish command encoder: {any}", .{err_finish});
+            webutils.log("ERROR: Failed to finish command encoder: " ++ @errorName(err_finish)); // Adjusted log
             webgpu.releaseHandle(encoder.handle, .CommandEncoder); // Release encoder on finish error
             return RendererError.CommandBufferCreationError;
         };
@@ -1381,6 +1353,6 @@ pub const Renderer = struct {
 
         queue.submit(&.{command_buffer});
         webgpu.releaseHandle(command_buffer.handle, .CommandBuffer); // Release command buffer after submit (Zig owns, JS side handle can be released)
-        log.info("renderFrame: Frame commands submitted successfully.", .{});
+        webutils.log("INFO: renderFrame: Frame commands submitted successfully."); // Adjusted log
     }
 };

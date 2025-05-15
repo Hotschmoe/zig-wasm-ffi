@@ -70,6 +70,7 @@ pub fn build(b: *std.Build) !void {
         // "webaudio",
         "webinput",
         "webgpu",
+        "webutils",
     };
 
     var all_copy_js_glue_steps = std.ArrayList(*std.Build.Step).init(b.allocator);

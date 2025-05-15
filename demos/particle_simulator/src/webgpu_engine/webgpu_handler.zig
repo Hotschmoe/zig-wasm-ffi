@@ -1,4 +1,5 @@
 const webgpu = @import("zig-wasm-ffi").webgpu;
+const webutils = @import("zig-wasm-ffi").webutils;
 // const std = @import("std"); // No longer needed, @memcpy is a builtin
 
 // Define the Handler Struct
@@ -10,7 +11,7 @@ pub const WebGPUHandler = struct {
 
     // Public API methods that operate on an instance of WebGPUHandler
     pub fn init(self: *WebGPUHandler) void { // Changed from !void, errors handled by status
-        log("[WebGPUHandler] Initializing WebGPU (async via callbacks)...Instance method");
+        webutils.log("[WebGPUHandler] Initializing WebGPU (async via callbacks)...Instance method");
         self.initialization_status = .pending;
         self.adapter = 0;
         self.device = 0;
@@ -52,29 +53,29 @@ pub const WebGPUHandler = struct {
         _ = self; // self not used yet
         // Placeholder - In a real scenario, this would call a JS function via FFI
         // to get navigator.gpu.getPreferredCanvasFormat()
-        log("[WebGPUHandler] getPreferredCanvasFormat called - returning placeholder .bgra8unorm");
+        webutils.log("[WebGPUHandler] getPreferredCanvasFormat called - returning placeholder .bgra8unorm");
         return .bgra8unorm;
     }
 
     pub fn deinit(self: *WebGPUHandler) void {
-        log("[WebGPUHandler] Deinitializing WebGPU (instance)..._fields_before_release: A({d}) D({d}) Q({d})", .{ self.adapter, self.device, self.queue });
+        webutils.log("[WebGPUHandler] Deinitializing WebGPU (instance)..._fields_before_release: A(" ++ "TODO_INT_TO_STRING" ++ ") D(" ++ "TODO_INT_TO_STRING" ++ ") Q(" ++ "TODO_INT_TO_STRING" ++ ")"); // TODO: Format numbers
         if (self.queue != 0) {
             webgpu.releaseHandle(.Queue, self.queue); // Corrected HandleType casing
             self.queue = 0;
-            log("[WebGPUHandler] Queue released.");
+            webutils.log("[WebGPUHandler] Queue released.");
         }
         if (self.device != 0) {
             webgpu.releaseHandle(.Device, self.device); // Corrected HandleType casing
             self.device = 0;
-            log("[WebGPUHandler] Device released.");
+            webutils.log("[WebGPUHandler] Device released.");
         }
         if (self.adapter != 0) {
             webgpu.releaseHandle(.Adapter, self.adapter); // Corrected HandleType casing
             self.adapter = 0;
-            log("[WebGPUHandler] Adapter released.");
+            webutils.log("[WebGPUHandler] Adapter released.");
         }
         self.initialization_status = .pending;
-        log("[WebGPUHandler] WebGPU deinitialized (instance).");
+        webutils.log("[WebGPUHandler] WebGPU deinitialized (instance).");
     }
 };
 
@@ -98,40 +99,40 @@ const InitializationStatus = enum {
     failed,
 };
 
-fn log(message: []const u8) void {
-    webgpu.log(message);
-}
+// fn log(message: []const u8) void {
+//     webgpu.log(message);
+// }
 
 // --- Exported Zig functions for JavaScript to call back into ---
 // These now operate on the global g_wgpu_handler_instance
 
 pub export fn zig_receive_adapter(adapter_handle: webgpu.Adapter, status: u32) void {
-    log("[WebGPUHandler] zig_receive_adapter called (global instance update).");
+    webutils.log("[WebGPUHandler] zig_receive_adapter called (global instance update).");
     if (status == 1 and adapter_handle != 0) { // 1 for success
         g_wgpu_handler_instance.adapter = adapter_handle;
         g_wgpu_handler_instance.initialization_status = .adapter_success;
-        log("[WebGPUHandler] Adapter received successfully. Requesting device...");
+        webutils.log("[WebGPUHandler] Adapter received successfully. Requesting device...");
         webgpu.adapterRequestDevice(g_wgpu_handler_instance.adapter);
     } else {
         g_wgpu_handler_instance.initialization_status = .adapter_failed;
         webgpu.getAndLogWebGPUError("[WebGPUHandler] Failed to get adapter (JS error context): ");
-        log("[WebGPUHandler] Adapter request failed. Further initialization halted.");
+        webutils.log("[WebGPUHandler] Adapter request failed. Further initialization halted.");
     }
 }
 
 pub export fn zig_receive_device(device_handle: webgpu.Device, status: u32) void {
-    log("[WebGPUHandler] zig_receive_device called (global instance update).");
+    webutils.log("[WebGPUHandler] zig_receive_device called (global instance update).");
     if (status == 1 and device_handle != 0) { // 1 for success
         g_wgpu_handler_instance.device = device_handle;
         g_wgpu_handler_instance.initialization_status = .device_success;
-        log("[WebGPUHandler] Device received successfully. Getting queue...");
+        webutils.log("[WebGPUHandler] Device received successfully. Getting queue...");
 
         var q_handle_optional: ?webgpu.Queue = null;
         q_handle_optional = webgpu.deviceGetQueue(g_wgpu_handler_instance.device) catch |err| {
             g_wgpu_handler_instance.initialization_status = .queue_failed;
             webgpu.getAndLogWebGPUError("[WebGPUHandler] FFI error during deviceGetQueue: ");
-            log("Zig error details from FFI deviceGetQueue: ");
-            log(@errorName(err));
+            webutils.log("Zig error details from FFI deviceGetQueue: ");
+            webutils.log(@errorName(err));
             g_wgpu_handler_instance.initialization_status = .failed;
             return; // Stop further processing if FFI call failed.
         };
@@ -139,19 +140,19 @@ pub export fn zig_receive_device(device_handle: webgpu.Device, status: u32) void
         if (q_handle_optional) |q_handle| {
             g_wgpu_handler_instance.queue = q_handle;
             g_wgpu_handler_instance.initialization_status = .queue_success;
-            log("[WebGPUHandler] Queue obtained successfully. Initialization complete.");
+            webutils.log("[WebGPUHandler] Queue obtained successfully. Initialization complete.");
             g_wgpu_handler_instance.initialization_status = .complete;
         } else {
             // This case means deviceGetQueue FFI call succeeded (no Zig error), but JS returned null/0 for queue.
             g_wgpu_handler_instance.initialization_status = .queue_failed;
             webgpu.getAndLogWebGPUError("[WebGPUHandler] JS error context for queue retrieval failure (JS returned no queue): ");
-            log("[WebGPUHandler] Overall: Failed to get queue. Initialization failed.");
+            webutils.log("[WebGPUHandler] Overall: Failed to get queue. Initialization failed.");
             g_wgpu_handler_instance.initialization_status = .failed;
         }
     } else {
         g_wgpu_handler_instance.initialization_status = .device_failed;
         webgpu.getAndLogWebGPUError("[WebGPUHandler] Failed to get device (JS error context): ");
-        log("[WebGPUHandler] Device request failed. Further initialization halted.");
+        webutils.log("[WebGPUHandler] Device request failed. Further initialization halted.");
         g_wgpu_handler_instance.initialization_status = .failed;
     }
 }

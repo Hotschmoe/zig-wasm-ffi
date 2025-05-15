@@ -1,32 +1,5 @@
 const webinput = @import("zig-wasm-ffi").webinput;
-
-// FFI import for JavaScript's console.log
-extern "env" fn js_log_string(message_ptr: [*c]const u8, message_len: u32) void;
-
-// Helper function to log strings from Zig (application-level)
-fn log_app_info(message: []const u8) void {
-    const prefix = "[AppInputHandler] ";
-    var buffer: [128]u8 = undefined; // Ensure buffer is large enough for prefix + message
-    var current_len: usize = 0;
-
-    // Copy prefix
-    for (prefix) |char_code| {
-        if (current_len >= buffer.len - 1) { // Space around - for linter
-            break;
-        }
-        buffer[current_len] = char_code;
-        current_len += 1;
-    }
-    // Copy message
-    for (message) |char_code| {
-        if (current_len >= buffer.len - 1) { // Space around - for linter
-            break;
-        }
-        buffer[current_len] = char_code;
-        current_len += 1;
-    }
-    js_log_string(&buffer, @intCast(current_len));
-}
+const webutils = @import("zig-wasm-ffi").webutils;
 
 // --- Configuration & State (Application-Specific) ---
 const KEY_SPACE: u32 = 32; // JavaScript event.keyCode for Spacebar
@@ -63,6 +36,7 @@ pub fn update() void {
         g_first_update_cycle = false;
     } else {
         if (current_mouse_pos.x != g_last_mouse_x or current_mouse_pos.y != g_last_mouse_y) {
+            // webutils.log("Mouse moved to X: TODO_FLOAT_TO_STRING Y: TODO_FLOAT_TO_STRING");
             g_last_mouse_x = current_mouse_pos.x;
             g_last_mouse_y = current_mouse_pos.y;
         }
@@ -70,27 +44,27 @@ pub fn update() void {
 
     // Demonstrate checking multiple mouse buttons
     if (g_was_left_mouse_just_pressed_this_frame) { // Use cached state for logging
-        log_app_info("Left mouse button just pressed!");
+        webutils.log("[AppInputHandler] Left mouse button just pressed!");
     }
     if (webinput.was_mouse_button_just_pressed(MOUSE_MIDDLE_BUTTON)) {
-        log_app_info("Middle mouse button just pressed!");
+        webutils.log("[AppInputHandler] Middle mouse button just pressed!");
     }
     if (webinput.was_mouse_button_just_pressed(MOUSE_RIGHT_BUTTON)) {
-        log_app_info("Right mouse button just pressed!");
+        webutils.log("[AppInputHandler] Right mouse button just pressed!");
     }
 
     // Demonstrate checking multiple specific keys
     if (g_was_space_just_pressed_this_frame) { // Use cached state for logging
-        log_app_info("Spacebar just pressed!");
+        webutils.log("[AppInputHandler] Spacebar just pressed!");
     }
     if (webinput.was_key_just_pressed(KEY_A)) {
-        log_app_info("'A' key just pressed!");
+        webutils.log("[AppInputHandler] 'A' key just pressed!");
     }
     if (webinput.was_key_just_pressed(KEY_ENTER)) {
-        log_app_info("Enter key just pressed!");
+        webutils.log("[AppInputHandler] Enter key just pressed!");
     }
     if (webinput.was_key_just_pressed(KEY_SHIFT_LEFT)) {
-        log_app_info("Shift key just pressed!");
+        webutils.log("[AppInputHandler] Shift key just pressed!");
     }
 
     webinput.end_input_frame_state_update();

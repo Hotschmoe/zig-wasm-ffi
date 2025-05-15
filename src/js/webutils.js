@@ -21,4 +21,34 @@ export function env_js_log_message_with_length(messagePtr, messageLen) {
         console.error("Error decoding WASM string for logging:", e);
         console.log(`[WASM LOG (decode err)] ptr: ${messagePtr}, len: ${messageLen}`);
     }
-} 
+}
+
+// do we need this below?
+
+// FFI import for JavaScript's console.log
+// extern "env" fn js_log_string(message_ptr: [*c]const u8, message_len: u32) void;
+
+// Helper function to log strings from Zig (application-level)
+// fn log_app_info(message: []const u8) void {
+//     const prefix = "[AppInputHandler] ";
+//     var buffer: [128]u8 = undefined; // Ensure buffer is large enough for prefix + message
+//     var current_len: usize = 0;
+//
+//     // Copy prefix
+//     for (prefix) |char_code| {
+//         if (current_len >= buffer.len - 1) { // Space around - for linter
+//             break;
+//         }
+//         buffer[current_len] = char_code;
+//         current_len += 1;
+//     }
+//     // Copy message
+//     for (message) |char_code| {
+//         if (current_len >= buffer.len - 1) { // Space around - for linter
+//             break;
+//         }
+//         buffer[current_len] = char_code;
+//         current_len += 1;
+//     }
+//     js_log_string(&buffer, @intCast(current_len));
+// }

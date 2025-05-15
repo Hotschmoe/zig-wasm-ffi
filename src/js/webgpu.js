@@ -243,17 +243,6 @@ export const webGPUNativeImports = {
         }
     },
 
-    // Logging function for Zig
-    js_log_string: function(message_ptr, message_len) {
-        if (!globalWebGPU.memory) {
-            console.error("[webgpu.js] Wasm memory not available for js_log_string.");
-            return;
-        }
-        const buffer = new Uint8Array(globalWebGPU.memory.buffer, message_ptr, message_len);
-        const text = new TextDecoder('utf-8').decode(buffer);
-        console.log("[Zig Wasm]", text);
-    },
-
     env_wgpu_device_create_buffer_js: function(device_handle, descriptor_ptr) {
         const device = globalWebGPU.devices[device_handle];
         if (!device) {

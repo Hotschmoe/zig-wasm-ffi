@@ -3,6 +3,7 @@
 import * as webGPU_module from './webgpu.js'; // Renamed to avoid conflict with a potential global
 // Import WebInput module
 import * as webInput from './webinput.js'; 
+import * as webutils from './webutils.js';
 
 // Global state for the demo
 const globalState = {
@@ -31,6 +32,25 @@ const activeModules = {
             webInput.initWebInputJs(wasmExports, globalState.canvas); 
             console.log("[Main.js] WebInput setup complete via webInput.initWebInputJs.");
             return null; 
+        }
+    },
+    "WebUtils": {
+        nativeImports: { 
+            env_js_log_message_with_length: webutils.env_js_log_message_with_length 
+        },
+        setupJS: (wasmExports, wasmMemory) => {
+            // webutils.js doesn't have an explicit init function in the provided snippet
+            // but we need to ensure its functions can access wasmMemory if they need to.
+            // For env_js_log_message_with_length, it seems to expect window.wasmInstance.exports.memory
+            // We should ensure window.wasmInstance is set up correctly, which happens in initWasm.
+            // So, just a log here or make sure its functions get wasmMemory if they are refactored later.
+            if (webutils.env_js_log_message_with_length && typeof window.wasmInstance === 'undefined'){
+                 console.warn("[Main.js] WebUtils setup: window.wasmInstance not yet defined. env_js_log_message_with_length might not work if called before full Wasm init.");
+            } else {
+                 console.log("[Main.js] WebUtils setup complete. Logging function is now available to Wasm via env.");
+            }
+            // If webutils functions are refactored to take wasmMemory directly:
+            // e.g., webutils.initWebUtilsJs(wasmMemory);
         }
     }
 };
