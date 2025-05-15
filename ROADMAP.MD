@@ -9,7 +9,7 @@ The goal is to provide comprehensive bindings for key browser APIs. The current 
 | API Name        | Not Started | Not Working | Working | Complete |
 |-----------------|:-----------:|:-----------:|:-------:|:--------:|
 | WebGPU          | ☐           | ☑           | ☐       | ☐        |
-| Web Audio       | ☐           | ☑           | ☐       | ☐        |
+| Web Audio       | ☐           | ☐           | ☑       | ☐        |
 | Web Input       | ☐           | ☐           | ☑       | ☐        |
 | Web Networking  | ☑           | ☐           | ☐       | ☐        |
 | Web Storage     | ☑           | ☐           | ☐       | ☐        |
