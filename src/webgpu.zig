@@ -222,19 +222,19 @@ pub fn getAndLogWebGPUError(comptime prefix: []const u8) void {
 // Initiates the request for a WebGPU Adapter.
 // The result will be delivered asynchronously to the exported Zig function `zig_receive_adapter`.
 pub fn requestAdapter() void {
-    log("Requesting WebGPU Adapter (async via callback)...", .{});
+    log("Requesting WebGPU Adapter (async via callback)...");
     env_wgpu_request_adapter_js();
 }
 
 // Initiates the request for a WebGPU Device from an Adapter.
 // The result will be delivered asynchronously to the exported Zig function `zig_receive_device`.
 pub fn adapterRequestDevice(adapter: Adapter) void {
-    log("Requesting WebGPU Device (async via callback)...", .{});
+    log("Requesting WebGPU Device (async via callback)...");
     if (adapter == 0) {
         // This is a synchronous error check before making the async call.
         // The application needs a way to know this immediate failure.
         // For now, we log. A robust FFI might have requestAdapter return an error for invalid params.
-        log("E00: Invalid adapter handle (0) passed to adapterRequestDevice. Device request not sent.", .{});
+        log("E00: Invalid adapter handle (0) passed to adapterRequestDevice. Device request not sent.");
         // Potentially, the JS side could also check and call back with an error,
         // but an early Zig-side check is good.
         // How to signal this back to the caller in an async model without return values here?
@@ -246,9 +246,9 @@ pub fn adapterRequestDevice(adapter: Adapter) void {
 }
 
 pub fn deviceGetQueue(device: Device) !Queue {
-    log("Getting WebGPU Queue...", .{});
+    log("Getting WebGPU Queue...");
     if (device == 0) {
-        log("E00: Invalid device handle (0) passed to deviceGetQueue.", .{});
+        log("E00: Invalid device handle (0) passed to deviceGetQueue.");
         return error.QueueRetrievalFailed; // Synchronous error for invalid input
     }
     const queue_handle = env_wgpu_device_get_queue_js(device);
@@ -257,14 +257,14 @@ pub fn deviceGetQueue(device: Device) !Queue {
         getAndLogWebGPUError("E09: Failed to get queue (JS queue_handle is 0). ");
         return error.QueueRetrievalFailed;
     }
-    log("Queue acquired.", .{});
+    log("Queue acquired.");
     return queue_handle;
 }
 
 pub fn deviceCreateBuffer(device_handle: Device, descriptor: BufferDescriptor) !Buffer {
-    log("Creating WebGPU Buffer...", .{});
+    log("Creating WebGPU Buffer...");
     if (device_handle == 0) {
-        log("E00: Invalid device handle (0) passed to deviceCreateBuffer.", .{});
+        log("E00: Invalid device handle (0) passed to deviceCreateBuffer.");
         return error.InvalidHandle;
     }
     const buffer_handle = env_wgpu_device_create_buffer_js(device_handle, &descriptor);
@@ -272,14 +272,14 @@ pub fn deviceCreateBuffer(device_handle: Device, descriptor: BufferDescriptor) !
         getAndLogWebGPUError("E10: Failed to create buffer (JS buffer_handle is 0). ");
         return error.OperationFailed;
     }
-    log("Buffer created.", .{});
+    log("Buffer created.");
     return buffer_handle;
 }
 
 pub fn deviceCreateShaderModule(device_handle: Device, descriptor: ShaderModuleDescriptor) !ShaderModule {
-    log("Creating WebGPU Shader Module...", .{});
+    log("Creating WebGPU Shader Module...");
     if (device_handle == 0) {
-        log("E00: Invalid device handle (0) passed to deviceCreateShaderModule.", .{});
+        log("E00: Invalid device handle (0) passed to deviceCreateShaderModule.");
         return error.InvalidHandle;
     }
     const module_handle = env_wgpu_device_create_shader_module_js(device_handle, &descriptor);
@@ -287,7 +287,7 @@ pub fn deviceCreateShaderModule(device_handle: Device, descriptor: ShaderModuleD
         getAndLogWebGPUError("E11: Failed to create shader module (JS module_handle is 0). ");
         return error.OperationFailed;
     }
-    log("Shader module created.", .{});
+    log("Shader module created.");
     return module_handle;
 }
 
@@ -296,7 +296,7 @@ pub fn releaseHandle(handle_type: HandleType, handle: u32) void {
     // Ensure type_id for releaseHandle in JS matches this HandleType enum.
     // Note: Promise handle type was 1. Adapter is 2, Device 3, Queue 4.
     // Need to ensure JS side env_wgpu_release_handle_js expects these integer values correctly.
-    var type_id_for_js: u32 = switch (handle_type) {
+    const type_id_for_js: u32 = switch (handle_type) {
         // .promise => 1, // Removed
         .adapter => 2,
         .device => 3,
