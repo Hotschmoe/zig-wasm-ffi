@@ -7,10 +7,10 @@ This document outlines the plan to develop the `zig-wasm-ffi` WebGPU bindings, r
 **Goal:** Create a comprehensive, low-level Zig FFI for WebGPU, enabling a wide range of WebGPU operations from Zig. This phase focuses on `src/webgpu.zig` and `src/js/webgpu.js`.
 
 **Guiding Principles:**
-*   Use the promise ID/polling mechanism currently in `src/webgpu.zig` and `src/js/webgpu.js` as the standard for handling asynchronous WebGPU operations.
-*   Refer to `docs/old_proj_webgpu_imp.md` for a comprehensive list of WebGPU APIs to bind, adapting its callback-based suggestions to the promise/polling model.
-*   Ensure `js/webgpu.js` remains a thin JavaScript shim directly interacting with browser WebGPU APIs, managing handles and promise states.
-*   `webgpu.zig` will provide Zig types, extern declarations, and thin Zig-idiomatic wrappers.
+*   **Async Operations:** Utilize a **JS-to-Zig callback mechanism** for all asynchronous WebGPU operations. Zig FFI functions will initiate the operation, and exported Zig functions (implemented by the application) will receive the results (handles or errors) asynchronously. This approach is chosen to minimize JS/WASM boundary crossings for performance. Existing async functions using polling (e.g., for adapter/device requests) will be refactored to this callback pattern.
+*   Refer to `docs/old_proj_webgpu_imp.md` for a comprehensive list of WebGPU APIs to bind, adapting its FFI structure to the chosen callback model.
+*   Ensure `js/webgpu.js` remains a thin JavaScript shim directly interacting with browser WebGPU APIs, managing handles and invoking Zig callbacks.
+*   `webgpu.zig` will provide Zig types, extern declarations for JS functions, and declarations for the exported Zig callback functions. Wrapper functions in `webgpu.zig` will initiate the JS calls.
 
 **Steps:**
 
@@ -39,9 +39,9 @@ This document outlines the plan to develop the `zig-wasm-ffi` WebGPU bindings, r
     *   Write thin Zig wrapper functions that:
         *   Accept Zig-idiomatic parameters (e.g., slices, Zig structs).
         *   Marshal data (e.g., convert Zig strings to `[*c]const u8`, pass struct pointers).
-        *   Call the `extern` functions.
-        *   For async operations, call the `_async_js` function, then use `pollPromise` to await completion and retrieve the resulting handle or error.
-        *   Propagate errors using `!` and error sets.
+        *   Call the `extern` JS functions to initiate the WebGPU operation.
+    *   Declare `pub export fn` signatures for the Zig callbacks that JS will invoke (e.g., `zig_receive_adapter(handle: Adapter, status: u32) void`). The implementation of these callbacks will reside in the application using the FFI.
+    *   Propagate errors using `!` and error sets where appropriate for synchronous parts of FFI calls, or rely on status codes in callbacks for asynchronous operations.
 
 5.  **Testing (Basic):**
     *   Create minimal tests (or a small standalone example) that initialize WebGPU, create a buffer, and write to it to verify the core FFI is working.
@@ -132,9 +132,9 @@ This document outlines the plan to develop the `zig-wasm-ffi` WebGPU bindings, r
 ## Prerequisites & Questions Before Starting Deep Implementation:
 
 1.  **Async Pattern Confirmation:**
-    *   The current FFI (`src/webgpu.zig`, `src/js/webgpu.js`) uses a promise ID/polling mechanism for async operations (e.g., `env_wgpu_request_adapter_async_js` -> `env_wgpu_poll_promise_js`).
-    *   `docs/old_proj_webgpu_imp.md` often implies a callback system (e.g., `zig_receive_adapter_handle`).
-    *   **Action:** Confirm that the promise ID/polling mechanism is the standard going forward. If so, all async WebGPU API bindings (like pipeline creation) should follow this pattern. The FFI function list from `docs/old_proj_webgpu_imp.md` will need to be adapted.
+    *   ~~The current FFI (`src/webgpu.zig`, `src/js/webgpu.js`) uses a promise ID/polling mechanism for async operations (e.g., `env_wgpu_request_adapter_async_js` -> `env_wgpu_poll_promise_js`).~~
+    *   ~~`docs/old_proj_webgpu_imp.md` often implies a callback system (e.g., `zig_receive_adapter_handle`).~~
+    *   **Decision:** The **JS-to-Zig callback mechanism** is the standard going forward for all asynchronous WebGPU operations. Zig FFI functions will initiate the operation, and exported Zig functions (implemented by the application) will receive results/errors. The FFI function list from `docs/old_proj_webgpu_imp.md` will be adapted to this model. Existing FFI functions for adapter/device request will be refactored to this pattern.
 
 2.  **File Structure & Creation:**
     *   Are you okay with me proceeding based on the directory structure outlined for the demo (e.g., `demos/particle_simulator/src/main.zig`, `shaders/` dir)? I will not create files unless the plan explicitly says to for a step.
@@ -154,6 +154,9 @@ This document outlines the plan to develop the `zig-wasm-ffi` WebGPU bindings, r
         *   Command encoding for compute and render passes (`createCommandEncoder`, `beginComputePass`, `beginRenderPass`, `setPipeline`, `setBindGroup`, `dispatchWorkgroups`, `draw`, `end` for passes)
         *   Command submission (`finish`, `submit`)
         *   Texture creation and views (`createTexture`, `textureCreateView`)
-    *   Are there other specific WebGPU features from `particle_sim.html` (e.g., timestamp queries if supported, specific texture formats like `rgba16float`) that need to be explicitly planned for in the initial FFI? (Timestamp queries are mentioned in `particle_sim.html` and `docs/webgpu_init_plan.md`)
+    *   **Specific Features:**
+        *   **Timestamp Queries:** `particle_sim.html` uses them, and `docs/webgpu_init_plan.md` mentions them. The FFI will support creating `GPUQuerySet` and resolving queries if the adapter supports the feature. This includes JS functions for `createQuerySet`, `commandEncoderBegin/EndPipelineStatisticsQuery`, `commandEncoderResolveQuerySet`, and corresponding Zig externs/wrappers. These will be part of the FFI from Phase 1 and utilized in the `renderer.zig` in Phase 2.
+        *   **Texture Formats:** The particle simulator uses `rgba16float` for HDR. The FFI for texture creation will be designed to accept various formats (passed as enums or strings from Zig to JS) to ensure flexibility.
+    *   ~~Action Needed: Please confirm if timestamp queries and flexible texture format specification are high-priority for the initial FFI implementation.~~ **Decision:** These are confirmed as high-priority for the FFI.
 
 This plan should provide a clear path forward. I'm ready for your feedback on the prerequisites and questions before we dive deeper into implementing these phases.

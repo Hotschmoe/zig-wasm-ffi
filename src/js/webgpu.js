@@ -1,48 +1,14 @@
 // zig-wasm-ffi/src/js/webgpu.js
 
 const globalWebGPU = {
-    promises: [null], // Index 0 is unused, promise IDs are > 0
+    // promises: [null], // Index 0 is unused, promise IDs are > 0 - REMOVED
     adapters: [null], // Index 0 is unused, adapter handles are > 0
     devices: [null],  // Index 0 is unused, device handles are > 0
     queues: [null],   // Index 0 is unused, queue handles are > 0
+    buffers: [null], // Added for GPUBuffer handles
+    shaderModules: [null], // Added for GPUShaderModule handles
     error: null,      // To store the last error message
 };
-
-function storePromisePlaceholder() {
-    const id = globalWebGPU.promises.length;
-    globalWebGPU.promises.push({ status: 'pending', value: null, error: null });
-    return id;
-}
-
-function updatePromiseState(promise_id, status, valueOrError) {
-    if (promise_id > 0 && promise_id < globalWebGPU.promises.length) {
-        const entry = globalWebGPU.promises[promise_id];
-        if (!entry) {
-            // This can happen if Zig released the handle before the JS promise resolved/rejected.
-            console.warn(`[webgpu.js] updatePromiseState called for an already released promise_id: ${promise_id}. Status: ${status}`);
-            // If it was an error, ensure it's captured globally if not already.
-            if (status === 'rejected' && !globalWebGPU.error) {
-                globalWebGPU.error = valueOrError;
-            }
-            return;
-        }
-        entry.status = status;
-        if (status === 'fulfilled') {
-            entry.value = valueOrError;
-            entry.error = null; // Clear any prior error if it was somehow set
-        } else if (status === 'rejected') {
-            entry.error = valueOrError;
-            entry.value = null; // Clear any prior value
-            globalWebGPU.error = valueOrError; // Also store globally for simpler error fetching
-        }
-    } else {
-        console.error(`[webgpu.js] Invalid promise_id ${promise_id} for updatePromiseState`);
-        // If it was an error, ensure it's captured globally if not already.
-        if (status === 'rejected' && !globalWebGPU.error) {
-            globalWebGPU.error = valueOrError;
-        }
-    }
-}
 
 function storeAdapter(adapter) {
     if (!adapter) return 0;
@@ -65,6 +31,20 @@ function storeQueue(queue) {
     return handle;
 }
 
+function storeBuffer(buffer) {
+    if (!buffer) return 0;
+    const handle = globalWebGPU.buffers.length;
+    globalWebGPU.buffers.push(buffer);
+    return handle;
+}
+
+function storeShaderModule(shaderModule) {
+    if (!shaderModule) return 0;
+    const handle = globalWebGPU.shaderModules.length;
+    globalWebGPU.shaderModules.push(shaderModule);
+    return handle;
+}
+
 // For env_wgpu_get_last_error_msg_ptr_js and related functions
 let lastErrorBytes = null;
 
@@ -73,111 +53,103 @@ let lastErrorBytes = null;
 
 export const webGPUNativeImports = {
     wasmMemory: null, // This will be set by main.js after Wasm instantiation
+    wasmInstance: null, // Added to access Zig exports like callbacks
 
     // Request Adapter
-    // Returns a promise_id
-    env_wgpu_request_adapter_async_js: function() {
+    // Invokes a Zig callback: zig_receive_adapter(adapter_handle, status_code)
+    // status_code: 0 for success, 1 for error
+    env_wgpu_request_adapter_js: function() {
         if (!navigator.gpu) {
             const errorMsg = "navigator.gpu is not available.";
             globalWebGPU.error = errorMsg;
             console.error("[webgpu.js]", errorMsg);
-            return 0; // 0 indicates immediate error, no promise created
+            if (this.wasmInstance && this.wasmInstance.exports.zig_receive_adapter) {
+                this.wasmInstance.exports.zig_receive_adapter(0, 1);
+            } else {
+                console.error("[webgpu.js] Wasm instance or zig_receive_adapter not ready for error callback.");
+            }
+            return;
         }
         try {
-            const promise_id = storePromisePlaceholder();
             navigator.gpu.requestAdapter().then(adapter => {
-                updatePromiseState(promise_id, 'fulfilled', storeAdapter(adapter));
+                const adapterHandle = storeAdapter(adapter);
+                if (this.wasmInstance && this.wasmInstance.exports.zig_receive_adapter) {
+                    this.wasmInstance.exports.zig_receive_adapter(adapterHandle, 0);
+                } else {
+                     console.error("[webgpu.js] Wasm instance or zig_receive_adapter not ready for success callback.");
+                }
             }).catch(e => {
                 const errorMsg = `Failed to request adapter: ${e.message}`;
                 console.error("[webgpu.js]", errorMsg);
-                updatePromiseState(promise_id, 'rejected', errorMsg);
+                globalWebGPU.error = errorMsg;
+                if (this.wasmInstance && this.wasmInstance.exports.zig_receive_adapter) {
+                    this.wasmInstance.exports.zig_receive_adapter(0, 1);
+                } else {
+                    console.error("[webgpu.js] Wasm instance or zig_receive_adapter not ready for error callback.");
+                }
             });
-            return promise_id;
         } catch (e) {
             const errorMsg = `Error in requestAdapterAsync: ${e.message}`;
             globalWebGPU.error = errorMsg;
             console.error("[webgpu.js]", errorMsg);
-            return 0; // Error creating promise
+            if (this.wasmInstance && this.wasmInstance.exports.zig_receive_adapter) {
+                 this.wasmInstance.exports.zig_receive_adapter(0, 1);
+            } else {
+                console.error("[webgpu.js] Wasm instance or zig_receive_adapter not ready for error callback.");
+            }
         }
     },
 
     // Request Device from Adapter
-    // Takes adapter_handle, returns a promise_id
-    env_wgpu_adapter_request_device_async_js: function(adapter_handle) {
+    // Takes adapter_handle.
+    // Invokes a Zig callback: zig_receive_device(device_handle, status_code)
+    // status_code: 0 for success, 1 for error
+    env_wgpu_adapter_request_device_js: function(adapter_handle) {
         const adapter = globalWebGPU.adapters[adapter_handle];
         if (!adapter) {
             const errorMsg = "Invalid adapter handle for requestDevice.";
             globalWebGPU.error = errorMsg;
             console.error("[webgpu.js]", errorMsg);
-            return 0;
+            if (this.wasmInstance && this.wasmInstance.exports.zig_receive_device) {
+                this.wasmInstance.exports.zig_receive_device(0, 1);
+            } else {
+                console.error("[webgpu.js] Wasm instance or zig_receive_device not ready for error callback.");
+            }
+            return;
         }
         try {
-            const promise_id = storePromisePlaceholder();
             adapter.requestDevice().then(device => {
-                updatePromiseState(promise_id, 'fulfilled', storeDevice(device));
+                const deviceHandle = storeDevice(device);
+                if (this.wasmInstance && this.wasmInstance.exports.zig_receive_device) {
+                    this.wasmInstance.exports.zig_receive_device(deviceHandle, 0);
+                } else {
+                    console.error("[webgpu.js] Wasm instance or zig_receive_device not ready for success callback.");
+                }
             }).catch(e => {
                 const errorMsg = `Failed to request device: ${e.message}`;
                 console.error("[webgpu.js]", errorMsg);
-                updatePromiseState(promise_id, 'rejected', errorMsg);
+                globalWebGPU.error = errorMsg;
+                if (this.wasmInstance && this.wasmInstance.exports.zig_receive_device) {
+                    this.wasmInstance.exports.zig_receive_device(0, 1);
+                } else {
+                    console.error("[webgpu.js] Wasm instance or zig_receive_device not ready for error callback.");
+                }
             });
-            return promise_id;
         } catch (e) {
             const errorMsg = `Error in adapterRequestDeviceAsync: ${e.message}`;
             globalWebGPU.error = errorMsg;
             console.error("[webgpu.js]", errorMsg);
-            return 0;
+            if (this.wasmInstance && this.wasmInstance.exports.zig_receive_device) {
+                this.wasmInstance.exports.zig_receive_device(0, 1);
+            } else {
+                console.error("[webgpu.js] Wasm instance or zig_receive_device not ready for error callback.");
+            }
         }
     },
 
-    // Poll Promise Status
-    // Takes promise_id.
-    // Returns:
-    //   0: pending
-    //   1: fulfilled (result is ready)
-    //  -1: rejected (error occurred)
-    env_wgpu_poll_promise_js: function(promise_id) {
-        if (promise_id <= 0 || promise_id >= globalWebGPU.promises.length || !globalWebGPU.promises[promise_id]) {
-             // If promise_id is invalid or entry is null (already released)
-             // Avoid setting globalWebGPU.error here as it might overwrite a more relevant error
-             // console.warn(`[webgpu.js] Polling invalid or released promise_id: ${promise_id}`);
-             return -1; // Indicate error or invalid state for polling
-        }
-        const promise_entry = globalWebGPU.promises[promise_id];
-
-        // This check is theoretically redundant due to the one above, but kept for safety.
-        if (!promise_entry) { 
-            // console.error("[webgpu.js] Null promise entry during poll, id:", promise_id); // Should be caught above
-            return -1; 
-        }
-
-        if (promise_entry.status === 'fulfilled') return 1;
-        if (promise_entry.status === 'rejected') return -1;
-        return 0; // pending
-    },
-
-    // Get Adapter from a resolved promise
-    // Takes promise_id, returns adapter_handle or 0 on error/not ready.
-    env_wgpu_get_adapter_from_promise_js: function(promise_id) {
-        if (promise_id <= 0 || promise_id >= globalWebGPU.promises.length || !globalWebGPU.promises[promise_id]) return 0;
-        const result = globalWebGPU.promises[promise_id];
-        if (result && result.status === 'fulfilled') {
-            return result.value; 
-        }
-        // If rejected, updatePromiseState would have set globalWebGPU.error.
-        // If pending, or other invalid state, return 0.
-        return 0; 
-    },
-
-    // Get Device from a resolved promise
-    // Takes promise_id, returns device_handle or 0 on error/not ready.
-    env_wgpu_get_device_from_promise_js: function(promise_id) {
-        if (promise_id <= 0 || promise_id >= globalWebGPU.promises.length || !globalWebGPU.promises[promise_id]) return 0;
-        const result = globalWebGPU.promises[promise_id];
-        if (result && result.status === 'fulfilled') {
-            return result.value; 
-        }
-        return 0; 
-    },
+    // REMOVED env_wgpu_poll_promise_js
+    // REMOVED env_wgpu_get_adapter_from_promise_js
+    // REMOVED env_wgpu_get_device_from_promise_js
 
     // Get Device Queue
     // Takes device_handle, returns queue_handle
@@ -219,13 +191,12 @@ export const webGPUNativeImports = {
 
     env_wgpu_copy_last_error_msg_js: function(buffer_ptr, buffer_len) {
         if (lastErrorBytes && buffer_ptr && buffer_len > 0) {
-            const memory = this.wasmMemory;
+            const memory = this.wasmMemory; 
             if (!memory) {
                 const tempError = "Wasm memory not available to JS for error reporting.";
                 console.error("[webgpu.js]", tempError);
                 const encoder = new TextEncoder();
-                lastErrorBytes = encoder.encode(tempError); 
-                // globalWebGPU.error should not be cleared here, as Zig couldn't get it.
+                lastErrorBytes = encoder.encode(tempError);
                 return;
             }
             const wasmMemoryArray = new Uint8Array(memory.buffer, buffer_ptr, buffer_len);
@@ -233,8 +204,6 @@ export const webGPUNativeImports = {
             for (let i = 0; i < lenToCopy; i++) {
                 wasmMemoryArray[i] = lastErrorBytes[i];
             }
-            // Only clear the error if Zig could copy all of it.
-            // Otherwise, Zig might need to call again with a larger buffer or handle partial error.
             if (lenToCopy === lastErrorBytes.length) {
                  lastErrorBytes = null;
                  globalWebGPU.error = null; 
@@ -244,35 +213,119 @@ export const webGPUNativeImports = {
 
     // Function to release JS-side objects to prevent memory leaks
     env_wgpu_release_handle_js: function(type_id, handle) {
-        // type_id: 1 for promise (placeholder object), 2 for adapter, 3 for device, 4 for queue
+        // type_id: 1 for promise (REMOVED), 2 for adapter, 3 for device, 4 for queue, 5 for buffer, 6 for shader module
         switch (type_id) {
-            case 1: 
-                if (handle > 0 && handle < globalWebGPU.promises.length) {
-                    // console.log(`[webgpu.js] Releasing promise handle: ${handle}`);
-                    globalWebGPU.promises[handle] = null; // Clear the placeholder
-                }
-                break;
+            // case 1: // Promise handle - REMOVED
+            //     if (handle > 0 && handle < globalWebGPU.promises.length) {
+            //         globalWebGPU.promises[handle] = null;
+            //     }
+            //     break;
             case 2: if (handle > 0 && handle < globalWebGPU.adapters.length) globalWebGPU.adapters[handle] = null; break;
             case 3: if (handle > 0 && handle < globalWebGPU.devices.length) globalWebGPU.devices[handle] = null; break;
             case 4: if (handle > 0 && handle < globalWebGPU.queues.length) globalWebGPU.queues[handle] = null; break;
+            case 5: if (handle > 0 && handle < globalWebGPU.buffers.length) globalWebGPU.buffers[handle] = null; break;
+            case 6: if (handle > 0 && handle < globalWebGPU.shaderModules.length) globalWebGPU.shaderModules[handle] = null; break;
             default: console.warn(`[webgpu.js] Unknown type_id for release_handle: ${type_id}`);
         }
     },
 
     // Logging function for Zig
     js_log_string: function(message_ptr, message_len) {
-        if (!this.wasmMemory) {
+        const memory = this.wasmMemory; 
+        if (!memory) {
             console.error("[webgpu.js] Wasm memory not available for js_log_string. Message Ptr:", message_ptr, "Len:", message_len);
             if(message_ptr && message_len) console.log("[Zig Wasm] (memory unavailable) Tried to log message of length:", message_len);
             return;
         }
         try {
-            const memory = new Uint8Array(this.wasmMemory.buffer);
-            const messageBytes = memory.subarray(message_ptr, message_ptr + message_len);
+            const messageBytes = new Uint8Array(memory.buffer).subarray(message_ptr, message_ptr + message_len);
             const message = new TextDecoder('utf-8').decode(messageBytes);
             console.log("[Zig Wasm]", message);
         } catch (e) {
             console.error("[webgpu.js] Error in js_log_string:", e, "Message Ptr:", message_ptr, "Len:", message_len);
         }
-    }
+    },
+
+    env_wgpu_device_create_buffer_js: function(device_handle, descriptor_ptr) {
+        const device = globalWebGPU.devices[device_handle];
+        if (!device) {
+            globalWebGPU.error = "Invalid device handle for createBuffer.";
+            console.error("[webgpu.js]", globalWebGPU.error);
+            return 0;
+        }
+        if (!this.wasmMemory) {
+            globalWebGPU.error = "Wasm memory not available for createBuffer descriptor.";
+            console.error("[webgpu.js]", globalWebGPU.error);
+            return 0;
+        }
+        try {
+            const memoryView = new DataView(this.wasmMemory.buffer);
+            // Read BufferDescriptor from Wasm memory
+            // struct BufferDescriptor { label: ?[*:0]const u8, size: u64, usage: u32, mappedAtCreation: bool }
+            // For simplicity, assuming label is null for now. A full implementation would read the pointer.
+            // const label_ptr = memoryView.getUint32(descriptor_ptr, true); // Assuming pointer size is 4
+            const size = memoryView.getBigUint64(descriptor_ptr + 8, true); // Offset by label_ptr (assuming 4 or 8) and then size of ptr (8 for ?ptr)
+            const usage = memoryView.getUint32(descriptor_ptr + 16, true);
+            const mappedAtCreation = memoryView.getUint8(descriptor_ptr + 20, true) !== 0;
+
+            const jsDescriptor = {
+                size: Number(size), // GPUSize64 can be a Number in JS if not exceeding MAX_SAFE_INTEGER
+                usage: usage,
+                mappedAtCreation: mappedAtCreation,
+                // label: readStringFromWasm(label_ptr), // Helper function needed for full label support
+            };
+
+            const buffer = device.createBuffer(jsDescriptor);
+            return storeBuffer(buffer);
+        } catch (e) {
+            const errorMsg = `Error in deviceCreateBuffer: ${e.message}`;
+            globalWebGPU.error = errorMsg;
+            console.error("[webgpu.js]", errorMsg);
+            return 0;
+        }
+    },
+
+    env_wgpu_device_create_shader_module_js: function(device_handle, descriptor_ptr) {
+        const device = globalWebGPU.devices[device_handle];
+        if (!device) {
+            globalWebGPU.error = "Invalid device handle for createShaderModule.";
+            console.error("[webgpu.js]", globalWebGPU.error);
+            return 0;
+        }
+        if (!this.wasmMemory) {
+            globalWebGPU.error = "Wasm memory not available for createShaderModule descriptor.";
+            console.error("[webgpu.js]", globalWebGPU.error);
+            return 0;
+        }
+        try {
+            const memoryView = new DataView(this.wasmMemory.buffer);
+            // Read ShaderModuleDescriptor from Wasm memory
+            // struct ShaderModuleDescriptor { label: ?[*:0]const u8, wgsl_code: ShaderModuleWGSLDescriptor }
+            // struct ShaderModuleWGSLDescriptor { code_ptr: [*c]const u8, code_len: usize }
+            // Again, simplifying label for now.
+            // const label_ptr = memoryView.getUint32(descriptor_ptr, true);
+            const wgsl_code_descriptor_ptr = descriptor_ptr + 8; // Assuming label_ptr is 8 bytes (?ptr)
+            const code_ptr = memoryView.getUint32(wgsl_code_descriptor_ptr + 0, true); // Assuming [*c]u8 is a 4-byte ptr
+            const code_len = memoryView.getUint32(wgsl_code_descriptor_ptr + 4, true); // Assuming usize is 4 bytes in wasm32
+
+            const wgslBytes = new Uint8Array(this.wasmMemory.buffer, code_ptr, code_len);
+            const wgslCode = new TextDecoder().decode(wgslBytes);
+
+            const jsDescriptor = {
+                code: wgslCode,
+                // label: readStringFromWasm(label_ptr),
+            };
+            const shaderModule = device.createShaderModule(jsDescriptor);
+            return storeShaderModule(shaderModule);
+        } catch (e) {
+            const errorMsg = `Error in deviceCreateShaderModule: ${e.message}`;
+            globalWebGPU.error = errorMsg;
+            console.error("[webgpu.js]", errorMsg);
+            return 0;
+        }
+    },
 };
+
+// It's important that wasmInstance is set on webGPUNativeImports after Wasm instantiation.
+// Example: webGPUNativeImports.wasmInstance = instance;
+// And webGPUNativeImports.wasmMemory = instance.exports.memory;
