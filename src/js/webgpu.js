@@ -17,15 +17,30 @@ function storePromisePlaceholder() {
 function updatePromiseState(promise_id, status, valueOrError) {
     if (promise_id > 0 && promise_id < globalWebGPU.promises.length) {
         const entry = globalWebGPU.promises[promise_id];
+        if (!entry) {
+            // This can happen if Zig released the handle before the JS promise resolved/rejected.
+            console.warn(`[webgpu.js] updatePromiseState called for an already released promise_id: ${promise_id}. Status: ${status}`);
+            // If it was an error, ensure it's captured globally if not already.
+            if (status === 'rejected' && !globalWebGPU.error) {
+                globalWebGPU.error = valueOrError;
+            }
+            return;
+        }
         entry.status = status;
         if (status === 'fulfilled') {
             entry.value = valueOrError;
+            entry.error = null; // Clear any prior error if it was somehow set
         } else if (status === 'rejected') {
             entry.error = valueOrError;
-            globalWebGPU.error = valueOrError; // Also store globally for simpler error fetching for now
+            entry.value = null; // Clear any prior value
+            globalWebGPU.error = valueOrError; // Also store globally for simpler error fetching
         }
     } else {
         console.error(`[webgpu.js] Invalid promise_id ${promise_id} for updatePromiseState`);
+        // If it was an error, ensure it's captured globally if not already.
+        if (status === 'rejected' && !globalWebGPU.error) {
+            globalWebGPU.error = valueOrError;
+        }
     }
 }
 
@@ -63,8 +78,9 @@ export const webGPUNativeImports = {
     // Returns a promise_id
     env_wgpu_request_adapter_async_js: function() {
         if (!navigator.gpu) {
-            globalWebGPU.error = "navigator.gpu is not available.";
-            console.error("[webgpu.js]", globalWebGPU.error);
+            const errorMsg = "navigator.gpu is not available.";
+            globalWebGPU.error = errorMsg;
+            console.error("[webgpu.js]", errorMsg);
             return 0; // 0 indicates immediate error, no promise created
         }
         try {
@@ -78,10 +94,9 @@ export const webGPUNativeImports = {
             });
             return promise_id;
         } catch (e) {
-            globalWebGPU.error = `Error in requestAdapterAsync: ${e.message}`;
-            console.error("[webgpu.js]", globalWebGPU.error);
-            // If a promise_id was created before exception, mark it as rejected
-            // This path is less likely if storePromisePlaceholder is simple.
+            const errorMsg = `Error in requestAdapterAsync: ${e.message}`;
+            globalWebGPU.error = errorMsg;
+            console.error("[webgpu.js]", errorMsg);
             return 0; // Error creating promise
         }
     },
@@ -91,8 +106,9 @@ export const webGPUNativeImports = {
     env_wgpu_adapter_request_device_async_js: function(adapter_handle) {
         const adapter = globalWebGPU.adapters[adapter_handle];
         if (!adapter) {
-            globalWebGPU.error = "Invalid adapter handle for requestDevice.";
-            console.error("[webgpu.js]", globalWebGPU.error);
+            const errorMsg = "Invalid adapter handle for requestDevice.";
+            globalWebGPU.error = errorMsg;
+            console.error("[webgpu.js]", errorMsg);
             return 0;
         }
         try {
@@ -106,8 +122,9 @@ export const webGPUNativeImports = {
             });
             return promise_id;
         } catch (e) {
-            globalWebGPU.error = `Error in adapterRequestDeviceAsync: ${e.message}`;
-            console.error("[webgpu.js]", globalWebGPU.error);
+            const errorMsg = `Error in adapterRequestDeviceAsync: ${e.message}`;
+            globalWebGPU.error = errorMsg;
+            console.error("[webgpu.js]", errorMsg);
             return 0;
         }
     },
@@ -119,17 +136,18 @@ export const webGPUNativeImports = {
     //   1: fulfilled (result is ready)
     //  -1: rejected (error occurred)
     env_wgpu_poll_promise_js: function(promise_id) {
-        if (promise_id <= 0 || promise_id >= globalWebGPU.promises.length) {
-             globalWebGPU.error = `Invalid promise_id for polling: ${promise_id}`;
-             console.error("[webgpu.js]", globalWebGPU.error);
-             return -1; // Error
+        if (promise_id <= 0 || promise_id >= globalWebGPU.promises.length || !globalWebGPU.promises[promise_id]) {
+             // If promise_id is invalid or entry is null (already released)
+             // Avoid setting globalWebGPU.error here as it might overwrite a more relevant error
+             // console.warn(`[webgpu.js] Polling invalid or released promise_id: ${promise_id}`);
+             return -1; // Indicate error or invalid state for polling
         }
         const promise_entry = globalWebGPU.promises[promise_id];
 
-        if (!promise_entry) { // Should not happen if id is valid
-            globalWebGPU.error = `No promise entry found for promise_id: ${promise_id}`;
-            console.error("[webgpu.js]", globalWebGPU.error);
-            return -1; // Error
+        // This check is theoretically redundant due to the one above, but kept for safety.
+        if (!promise_entry) { 
+            // console.error("[webgpu.js] Null promise entry during poll, id:", promise_id); // Should be caught above
+            return -1; 
         }
 
         if (promise_entry.status === 'fulfilled') return 1;
@@ -140,24 +158,25 @@ export const webGPUNativeImports = {
     // Get Adapter from a resolved promise
     // Takes promise_id, returns adapter_handle or 0 on error/not ready.
     env_wgpu_get_adapter_from_promise_js: function(promise_id) {
-        if (promise_id <= 0 || promise_id >= globalWebGPU.promises.length) return 0;
+        if (promise_id <= 0 || promise_id >= globalWebGPU.promises.length || !globalWebGPU.promises[promise_id]) return 0;
         const result = globalWebGPU.promises[promise_id];
         if (result && result.status === 'fulfilled') {
-            return result.value; // This is the adapter_handle
+            return result.value; 
         }
-        // Error message is already set in globalWebGPU.error by updatePromiseState if rejected
-        return 0; // Not ready, or error
+        // If rejected, updatePromiseState would have set globalWebGPU.error.
+        // If pending, or other invalid state, return 0.
+        return 0; 
     },
 
     // Get Device from a resolved promise
     // Takes promise_id, returns device_handle or 0 on error/not ready.
     env_wgpu_get_device_from_promise_js: function(promise_id) {
-        if (promise_id <= 0 || promise_id >= globalWebGPU.promises.length) return 0;
+        if (promise_id <= 0 || promise_id >= globalWebGPU.promises.length || !globalWebGPU.promises[promise_id]) return 0;
         const result = globalWebGPU.promises[promise_id];
         if (result && result.status === 'fulfilled') {
-            return result.value; // This is the device_handle
+            return result.value; 
         }
-        return 0; // Not ready, or error
+        return 0; 
     },
 
     // Get Device Queue
@@ -173,8 +192,9 @@ export const webGPUNativeImports = {
             const queue = device.queue;
             return storeQueue(queue);
         } catch (e) {
-            globalWebGPU.error = `Error in deviceGetQueue: ${e.message}`;
-            console.error("[webgpu.js]", globalWebGPU.error);
+            const errorMsg = `Error in deviceGetQueue: ${e.message}`;
+            globalWebGPU.error = errorMsg;
+            console.error("[webgpu.js]", errorMsg);
             return 0;
         }
     },
@@ -201,10 +221,11 @@ export const webGPUNativeImports = {
         if (lastErrorBytes && buffer_ptr && buffer_len > 0) {
             const memory = this.wasmMemory;
             if (!memory) {
-                console.error("[webgpu.js] Wasm memory not available for copy_last_error_msg.");
                 const tempError = "Wasm memory not available to JS for error reporting.";
+                console.error("[webgpu.js]", tempError);
                 const encoder = new TextEncoder();
                 lastErrorBytes = encoder.encode(tempError); 
+                // globalWebGPU.error should not be cleared here, as Zig couldn't get it.
                 return;
             }
             const wasmMemoryArray = new Uint8Array(memory.buffer, buffer_ptr, buffer_len);
@@ -212,8 +233,12 @@ export const webGPUNativeImports = {
             for (let i = 0; i < lenToCopy; i++) {
                 wasmMemoryArray[i] = lastErrorBytes[i];
             }
-            lastErrorBytes = null;
-            globalWebGPU.error = null; 
+            // Only clear the error if Zig could copy all of it.
+            // Otherwise, Zig might need to call again with a larger buffer or handle partial error.
+            if (lenToCopy === lastErrorBytes.length) {
+                 lastErrorBytes = null;
+                 globalWebGPU.error = null; 
+            }
         }
     },
 
@@ -223,6 +248,7 @@ export const webGPUNativeImports = {
         switch (type_id) {
             case 1: 
                 if (handle > 0 && handle < globalWebGPU.promises.length) {
+                    // console.log(`[webgpu.js] Releasing promise handle: ${handle}`);
                     globalWebGPU.promises[handle] = null; // Clear the placeholder
                 }
                 break;
