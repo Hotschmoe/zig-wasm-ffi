@@ -1,4 +1,5 @@
 const input_handler = @import("input_handler.zig");
+const webgpu_handler = @import("webgpu_handler.zig");
 // const audio_handler = @import("audio_handler.zig"); // Removed
 
 // FFI import for JavaScript's console.log
@@ -34,8 +35,54 @@ var frame_count: u32 = 0;
 // This is the main entry point called by the Wasm runtime/JS after instantiation.
 // It replaces the previous `pub fn main() void` for JS interaction.
 pub export fn _start() void {
-    log_main_app_info("_start() called. Application initialized.");
-    // audio_handler.init_audio_system(); // Removed
+    log("Zig _start called. Initializing WebGPU FFI...");
+
+    var adapter: webgpu.Adapter = 0;
+    var device: webgpu.Device = 0;
+    var queue: webgpu.Queue = 0;
+
+    // Defer release of handles
+    defer {
+        webgpu.releaseHandle(webgpu.HandleType.queue, queue);
+        webgpu.releaseHandle(webgpu.HandleType.device, device);
+        webgpu.releaseHandle(webgpu.HandleType.adapter, adapter);
+        log("WebGPU handles released (if acquired).");
+        if (gpa.deinit() == .leak) {
+            log("Memory leak detected in GeneralPurposeAllocator!");
+        }
+    }
+
+    adapter = webgpu.requestAdapter(allocator) catch |err| {
+        log(std.fmt.comptimePrint("Failed to request adapter: {}", .{err}));
+        return;
+    };
+    if (adapter == 0) {
+        log("Adapter handle is 0 after successful request function call. This shouldn't happen if no error was returned.");
+        return;
+    }
+
+    device = webgpu.adapterRequestDevice(allocator, adapter) catch |err| {
+        log(std.fmt.comptimePrint("Failed to request device: {}", .{err}));
+        return;
+    };
+    if (device == 0) {
+        log("Device handle is 0 after successful request function call.");
+        return;
+    }
+
+    queue = webgpu.deviceGetQueue(allocator, device) catch |err| {
+        log(std.fmt.comptimePrint("Failed to get queue: {}", .{err}));
+        return;
+    };
+    if (queue == 0) {
+        log("Queue handle is 0 after successful get function call.");
+        return;
+    }
+
+    log("Successfully acquired WebGPU Adapter, Device, and Queue!");
+    log(std.fmt.comptimePrint("Adapter ID: {d}, Device ID: {d}, Queue ID: {d}", .{ adapter, device, queue }));
+
+    // TODO: Add more WebGPU operations here using the handles
 }
 
 // This function is called repeatedly from JavaScript (e.g., via requestAnimationFrame)
