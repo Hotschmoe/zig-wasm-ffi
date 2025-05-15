@@ -18,7 +18,7 @@ const globalState = {
 const activeModules = {
     "WebGPU":  {
         // nativeImports should point to the object containing the env_ functions
-        nativeImports: webGPU_module.webGPUNativeImports, 
+        nativeImports: webGPU_module.webGPUNativeImports,
         setupJS: webGPU_module.initWebGPUJs // This is correct
     },
     "WebInput":{
