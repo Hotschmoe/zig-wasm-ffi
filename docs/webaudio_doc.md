@@ -7,11 +7,12 @@ The `webaudio` module currently provides an interface for fundamental Web Audio 
 - Creating an `AudioContext`.
 - Decoding audio data into an `AudioBuffer`.
 - Playing decoded `AudioBuffer`s (basic one-shot playback).
+- Playing and controlling tagged, looping sounds (e.g., for background music).
 
 It relies on Zig calling FFI functions implemented in JavaScript, which then interact with the browser's Web Audio API. For asynchronous operations like decoding, JavaScript calls back into exported Zig functions.
 
 ### Future Enhancements
-- **Advanced Audio Playback**: Implement more sophisticated controls for playing decoded `AudioBuffer`s (e.g., stop, pause, resume, looping, gain control, panning).
+- **Advanced Audio Playback**: Implement more sophisticated controls for playing decoded `AudioBuffer`s (e.g., more detailed control over stop, pause, resume, gain control, panning for one-shot sounds. Looping is covered by tagged sounds).
 - **Audio Graph Manipulation**: Allow creation and connection of various `AudioNode` types (e.g., `GainNode`, `PannerNode`, `OscillatorNode`, `ConvolverNode`).
 - **Advanced Decoding Options**: Support for more detailed error handling or progress events during decoding.
 - **Microphone Input**: Accessing and processing microphone input via `MediaStreamAudioSourceNode`.
@@ -23,10 +24,12 @@ It relies on Zig calling FFI functions implemented in JavaScript, which then int
 The `webaudio` module enables your Zig Wasm application to initialize an audio environment and prepare audio data for playback.
 - **JavaScript Side (`js/webaudio.js`):**
     - A `setupWebAudio(wasmInstance)` function initializes the JavaScript glue, primarily storing the Wasm instance to allow callbacks to Zig.
-    - Exports FFI functions (e.g., `env_createAudioContext`, `env_decodeAudioData`, `env_playDecodedAudio`) that are imported and called by Zig.
+    - Exports FFI functions (e.g., `env_createAudioContext`, `env_decodeAudioData`, `env_playDecodedAudio`, `env_playLoopingTaggedSound`, `env_stopTaggedSound`) that are imported and called by Zig.
     - `env_createAudioContext`: Creates a new `AudioContext` and returns a handle (ID) to Zig.
     - `env_decodeAudioData`: Receives a pointer to audio data in Wasm memory, decodes it using the browser's `AudioContext.decodeAudioData()`, and then calls back to Zig (`zig_internal_on_audio_buffer_decoded` or `zig_internal_on_decode_error`) with the result.
-    - `env_playDecodedAudio`: Plays a specified, previously decoded audio buffer.
+    - `env_playDecodedAudio`: Plays a specified, previously decoded audio buffer (one-shot).
+    - `env_playLoopingTaggedSound`: Plays a decoded buffer in a loop, identified by a tag.
+    - `env_stopTaggedSound`: Stops a playing sound identified by its tag.
 - **Zig Side (`src/webaudio.zig`):**
     - Defines `extern "env"` FFI function signatures that Zig expects JavaScript to provide.
     - Manages internal state for the `AudioContextHandle` and tracks active audio decoding requests.
@@ -37,8 +40,10 @@ The `webaudio` module enables your Zig Wasm application to initialize an audio e
         3. Call `requestDecodeAudioData()` to initiate decoding of raw audio data.
         4. Poll for decoding status using `getDecodeRequestStatus()`.
         5. Retrieve information about decoded audio using `getDecodedAudioBufferInfo()`.
-        6. Call `playDecodedAudio()` to play a successfully decoded buffer.
-        7. Release decoding request slots using `releaseDecodeRequest()`.
+        6. Call `playDecodedAudio()` to play a successfully decoded buffer (one-shot).
+        7. Call `playLoopingTaggedSound()` to play a decoded buffer in a loop with a tag.
+        8. Call `stopTaggedSound()` to stop a tagged, looping sound.
+        9. Release decoding request slots using `releaseDecodeRequest()`.
 
 ### Zig Setup (`src/webaudio.zig`)
 
@@ -55,6 +60,8 @@ These are `extern "env"` functions that the Zig code calls. The JavaScript glue 
 - `env_createAudioContext() u32`
 - `env_decodeAudioData(context_id: u32, audio_data_ptr: [*]const u8, audio_data_len: usize, user_request_id: u32) void`
 - `env_playDecodedAudio(audio_context_id: u32, js_decoded_buffer_id: u32) void`
+- `env_playLoopingTaggedSound(audio_context_id: u32, js_buffer_id: u32, sound_instance_tag: u32) void`
+- `env_stopTaggedSound(audio_context_id: u32, sound_instance_tag: u32) void`
 
 **Exported Zig Functions (called by JavaScript for async callbacks):**
 These functions are `pub export` in `src/webaudio.zig`.
@@ -63,6 +70,8 @@ These functions are `pub export` in `src/webaudio.zig`.
 - `getDecodeRequestStatus(user_request_id: u32) ?DecodeStatus`: Checks the status of a decode request.
 - `getDecodedAudioBufferInfo(user_request_id: u32) ?AudioBufferInfo`: Gets info if decoding was successful.
 - `playDecodedAudio(ctx_handle: AudioContextHandle, js_decoded_buffer_id: u32) void`: Plays a decoded audio buffer.
+- `playLoopingTaggedSound(ctx_handle: AudioContextHandle, js_buffer_id: u32, sound_instance_tag: u32) void`: Plays a looping sound with a tag.
+- `stopTaggedSound(ctx_handle: AudioContextHandle, sound_instance_tag: u32) void`: Stops a tagged sound.
 - `releaseDecodeRequest(user_request_id: u32) void`: Frees a decode request slot.
 
 **Public Zig API (called by your application):**
@@ -80,13 +89,15 @@ These functions are `pub export` in `src/webaudio.zig`.
     - `export function env_createAudioContext()`: Creates an `AudioContext`, stores it, and returns an ID.
     - `export async function env_decodeAudioData(context_id, data_ptr, data_len, user_request_id)`: Reads audio data from Wasm memory, uses `AudioContext.decodeAudioData`, and then calls `wasmInstance.exports.zig_internal_on_audio_buffer_decoded` or `wasmInstance.exports.zig_internal_on_decode_error`.
     - `export function env_playDecodedAudio(context_id, js_decoded_buffer_id)`: Plays a specified, previously decoded audio buffer.
+    - `export function env_playLoopingTaggedSound(context_id, js_buffer_id, sound_instance_tag)`: Plays a looping sound, managing it by a tag.
+    - `export function env_stopTaggedSound(context_id, sound_instance_tag)`: Stops a sound managed by its tag.
 
 ### Project Integration
 
 **1. `build.zig` and `main.js` Generation:**
 
 Your main JavaScript file (often generated or influenced by `build.zig`) needs to:
-1. Import the FFI functions (like `env_createAudioContext`, `env_decodeAudioData`, `env_playDecodedAudio`) and the `setupWebAudio` function from `js/webaudio.js`.
+1. Import the FFI functions (like `env_createAudioContext`, `env_decodeAudioData`, `env_playDecodedAudio`, `env_playLoopingTaggedSound`, `env_stopTaggedSound`) and the `setupWebAudio` function from `js/webaudio.js`.
 2. Provide these FFI functions in the `env` object when instantiating the Wasm module.
 3. Call `setupWebAudio(instance)` after the Wasm module is instantiated.
 
@@ -99,6 +110,8 @@ import {
     env_createAudioContext, 
     env_decodeAudioData,
     env_playDecodedAudio,
+    env_playLoopingTaggedSound,
+    env_stopTaggedSound,
     setupWebAudio
 } from './webaudio.js'; // Assuming webaudio.js is copied to dist/
 
@@ -109,6 +122,8 @@ async function initWasm() {
             env_createAudioContext,
             env_decodeAudioData,
             env_playDecodedAudio,
+            env_playLoopingTaggedSound,
+            env_stopTaggedSound,
 
             // ... any other FFI imports your app needs ...
             js_log_string: (ptr, len) => { /* ... console log from Wasm ... */ },
@@ -131,7 +146,7 @@ initWasm().catch(console.error);
 
 Your `build.zig` script (as shown in the main `README.md` of `zig-wasm-ffi`) should handle:
 - Copying `js/webaudio.js` to the output directory (e.g., `dist/`) if "webaudio" is listed in `used_apis`.
-- Generating the `main.js` file with the correct JavaScript imports from `./webaudio.js` and including `env_createAudioContext`, `env_decodeAudioData`, and `env_playDecodedAudio` in the `env` object passed to `WebAssembly.instantiateStreaming`.
+- Generating the `main.js` file with the correct JavaScript imports from `./webaudio.js` and including `env_createAudioContext`, `env_decodeAudioData`, `env_playDecodedAudio`, `env_playLoopingTaggedSound`, and `env_stopTaggedSound` in the `env` object passed to `WebAssembly.instantiateStreaming`.
 - Injecting the `setupWebAudio(instance);` call into the generated `main.js` after instantiation.
 
 **2. Example Zig Application Usage (`src/main.zig`):**
