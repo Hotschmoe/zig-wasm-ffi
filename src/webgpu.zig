@@ -160,7 +160,7 @@ fn simple_min(a: u32, b: u32) u32 {
 
 // Logs an error message retrieved from JS FFI into a stack buffer.
 // Renamed to avoid conflict if application also has a getLastErrorMsg
-pub fn getAndLogWebGPUError(comptime prefix: []const u8) void {
+pub fn getAndLogWebGPUError(prefix: []const u8) void {
     if (env_wgpu_get_last_error_msg_ptr_js() == 0) {
         if (prefix.len > 0) log(prefix);
         return;

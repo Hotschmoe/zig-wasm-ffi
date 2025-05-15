@@ -1,5 +1,5 @@
 const webgpu = @import("zig-wasm-ffi").webgpu;
-const std = @import("std"); // Included for @memcpy, will evaluate if truly needed for no_std later
+// const std = @import("std"); // No longer needed, @memcpy is a builtin
 
 // Global state for WebGPU handles for this demo module
 var g_adapter: webgpu.Adapter = 0;
@@ -46,21 +46,17 @@ pub export fn zig_receive_device(device_handle: webgpu.Device, status: u32) void
         g_initialization_status = .device_success;
         log("[WebGPUHandler] Device received successfully. Getting queue...");
 
-        // Attempt to get the queue synchronously as part of the device success callback
-        // const queue_maybe = webgpu.deviceGetQueue(g_device);
-        // log("[WebGPUHandler] deviceGetQueue call attempted.");
-
-        // Correctly handle the error union returned by deviceGetQueue
         if (webgpu.deviceGetQueue(g_device)) |q_handle| {
             g_queue = q_handle;
-            g_initialization_status = .queue_success; // Or .complete if this is the last step
+            g_initialization_status = .queue_success;
             log("[WebGPUHandler] Queue obtained successfully. Initialization complete.");
-            g_initialization_status = .complete; // Mark as fully complete
+            g_initialization_status = .complete;
         } else |err| {
             g_initialization_status = .queue_failed;
+            // This concatenation is now valid as getAndLogWebGPUError takes a runtime string
             webgpu.getAndLogWebGPUError("[WebGPUHandler] Failed to get queue. Error: " ++ @errorName(err) ++ ". ");
             log("[WebGPUHandler] Failed to get queue. Initialization failed.");
-            g_initialization_status = .failed; // Mark as failed overall
+            g_initialization_status = .failed;
         }
     } else {
         g_initialization_status = .device_failed;
@@ -75,8 +71,7 @@ pub export fn zig_receive_device(device_handle: webgpu.Device, status: u32) void
 pub fn init() !void {
     log("[WebGPUHandler] Initializing WebGPU (async via callbacks)...");
     g_initialization_status = .pending;
-    webgpu.requestAdapter(); // This will eventually call zig_receive_adapter
-    // The actual success/failure is now determined by callbacks and status checks.
+    webgpu.requestAdapter();
 }
 
 pub fn isInitialized() bool {
@@ -119,6 +114,6 @@ pub fn deinit() void {
         g_adapter = 0;
         log("[WebGPUHandler] Adapter released.");
     }
-    g_initialization_status = .pending; // Reset status
+    g_initialization_status = .pending;
     log("[WebGPUHandler] WebGPU deinitialized.");
 }
