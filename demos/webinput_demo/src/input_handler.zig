@@ -42,9 +42,18 @@ var g_last_mouse_x: f32 = -1.0; // Use a sentinel value for first update
 var g_last_mouse_y: f32 = -1.0;
 var g_first_update_cycle: bool = true;
 
+// Cached input states for the current frame
+var g_was_left_mouse_just_pressed_this_frame: bool = false;
+// Add more cached states here if needed (e.g., for spacebar)
+var g_was_space_just_pressed_this_frame: bool = false;
+
 // --- Public API for Input Handler (Application Layer) ---
 pub fn update() void {
     webinput.begin_input_frame_state_update();
+
+    // Cache "just pressed" states for this frame
+    g_was_left_mouse_just_pressed_this_frame = webinput.was_mouse_button_just_pressed(MOUSE_LEFT_BUTTON);
+    g_was_space_just_pressed_this_frame = webinput.was_key_just_pressed(KEY_SPACE);
 
     const current_mouse_pos = webinput.get_mouse_position();
     if (g_first_update_cycle) {
@@ -59,7 +68,7 @@ pub fn update() void {
     }
 
     // Demonstrate checking multiple mouse buttons
-    if (webinput.was_mouse_button_just_pressed(MOUSE_LEFT_BUTTON)) {
+    if (g_was_left_mouse_just_pressed_this_frame) { // Use cached state for logging
         log_app_info("Left mouse button just pressed!");
     }
     if (webinput.was_mouse_button_just_pressed(MOUSE_MIDDLE_BUTTON)) {
@@ -70,7 +79,7 @@ pub fn update() void {
     }
 
     // Demonstrate checking multiple specific keys
-    if (webinput.was_key_just_pressed(KEY_SPACE)) {
+    if (g_was_space_just_pressed_this_frame) { // Use cached state for logging
         log_app_info("Spacebar just pressed!");
     }
     if (webinput.was_key_just_pressed(KEY_A)) {
@@ -120,9 +129,9 @@ pub fn was_key_just_released(key_code: u32) bool {
 }
 
 pub fn was_space_just_pressed() bool {
-    return webinput.was_key_just_pressed(KEY_SPACE);
+    return g_was_space_just_pressed_this_frame; // Return cached state
 }
 
 pub fn was_left_mouse_button_just_pressed() bool {
-    return webinput.was_mouse_button_just_pressed(MOUSE_LEFT_BUTTON);
+    return g_was_left_mouse_just_pressed_this_frame; // Return cached state
 }
