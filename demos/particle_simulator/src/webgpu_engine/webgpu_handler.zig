@@ -34,7 +34,7 @@ pub export fn zig_receive_adapter(adapter_handle: webgpu.Adapter, status: u32) v
         webgpu.adapterRequestDevice(g_adapter);
     } else {
         g_initialization_status = .adapter_failed;
-        webgpu.getAndLogWebGPUError("[WebGPUHandler] Failed to get adapter. ");
+        webgpu.getAndLogWebGPUError("[WebGPUHandler] Failed to get adapter (JS error context): ");
         log("[WebGPUHandler] Adapter request failed. Further initialization halted.");
     }
 }
@@ -53,14 +53,21 @@ pub export fn zig_receive_device(device_handle: webgpu.Device, status: u32) void
             g_initialization_status = .complete;
         } else |err| {
             g_initialization_status = .queue_failed;
-            // This concatenation is now valid as getAndLogWebGPUError takes a runtime string
-            webgpu.getAndLogWebGPUError("[WebGPUHandler] Failed to get queue. Error: " ++ @errorName(err) ++ ". ");
-            log("[WebGPUHandler] Failed to get queue. Initialization failed.");
+            // Log the Zig error separately
+            log("[WebGPUHandler] Failed to get queue due to Zig-side error.");
+            const zig_error_name: []const u8 = @errorName(err);
+            log("Zig error details: ");
+            log(zig_error_name);
+
+            // Then, get any associated JS error
+            webgpu.getAndLogWebGPUError("[WebGPUHandler] JS error context for queue retrieval failure: ");
+
+            log("[WebGPUHandler] Overall: Failed to get queue. Initialization failed.");
             g_initialization_status = .failed;
         }
     } else {
         g_initialization_status = .device_failed;
-        webgpu.getAndLogWebGPUError("[WebGPUHandler] Failed to get device. ");
+        webgpu.getAndLogWebGPUError("[WebGPUHandler] Failed to get device (JS error context): ");
         log("[WebGPUHandler] Device request failed. Further initialization halted.");
         g_initialization_status = .failed;
     }
