@@ -17,6 +17,7 @@ The goal is to provide comprehensive bindings for key browser APIs. The current 
 | Fullscreen API  | ☑           | ☐           | ☐       | ☐        |
 | WebRTC          | ☑           | ☐           | ☐       | ☐        |
 | WebXR           | ☑           | ☐           | ☐       | ☐        |
+| Web Utilities   | ☐           | ☐           | ☑       | ☐        |
 
 ## Development Milestones & Notes
 
@@ -31,9 +32,9 @@ The goal is to provide comprehensive bindings for key browser APIs. The current 
     *   Develop `webgpu.test.zig` for comprehensive unit testing.
 
 ### General Development Practices:
-*   **Test Files**: For every API binding (e.g., `someapi.zig`), a corresponding `someapi.test.zig` file must be created to ensure robustness and correctness. These tests will utilize Zig's standard library and testing capabilities, as demonstrated by `webinput.test.zig`.
+*   **Test Files**: For every API binding (e.g., `someapi.zig`), a corresponding `someapi.test.zig` file must be created to ensure robustness and correctness. These tests will utilize Zig's standard library and testing capabilities, as demonstrated by `webinput.test.zig`. This also applies to `webutils.zig`.
 *   **Demo Implementations**: A `demos/` (or potentially expanding the existing `example/`) directory will be maintained to showcase practical implementations of the completed API bindings. This will provide clear usage examples for developers.
-*   **WASM Freestanding Focus**: All bindings are developed for the `wasm32-freestanding` target. This means minimizing or avoiding the Zig Standard Library (`std`) where possible to ensure lean binaries and compatibility with the browser's WASM environment. FFI to JavaScript should be the primary mechanism for interacting with browser capabilities.
+*   **WASM Freestanding Focus**: All bindings are developed for the `wasm32-freestanding` target. This means minimizing or avoiding the Zig Standard Library (`std`) where possible to ensure lean binaries and compatibility with the browser's WASM environment. FFI to JavaScript should be the primary mechanism for interacting with browser capabilities. This includes common utilities like logging.
 
 ### Future API Considerations:
 *   Once Web Audio and WebGPU are in a "Working" or "Complete" state, development will proceed to other planned APIs (Web Networking, Web Storage, etc.) based on priority and community feedback.

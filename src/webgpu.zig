@@ -5,6 +5,19 @@ pub const Device = u32;
 pub const Queue = u32;
 pub const Buffer = u32;
 pub const ShaderModule = u32;
+pub const Texture = u32;
+pub const TextureView = u32;
+pub const Sampler = u32;
+pub const BindGroupLayout = u32;
+pub const BindGroup = u32;
+pub const PipelineLayout = u32;
+pub const ComputePipeline = u32;
+pub const RenderPipeline = u32;
+pub const CommandEncoder = u32;
+pub const CommandBuffer = u32;
+pub const RenderPassEncoder = u32;
+pub const ComputePassEncoder = u32;
+pub const QuerySet = u32;
 // TODO: Add more handles: Texture, TextureView, Sampler, BindGroupLayout, PipelineLayout, RenderPipeline, ComputePipeline, BindGroup, CommandEncoder, CommandBuffer, RenderPassEncoder, ComputePassEncoder, QuerySet
 
 // Enum for promise status - REMOVED as pollPromise is removed
@@ -22,6 +35,19 @@ pub const HandleType = enum(u32) {
     queue = 4,
     buffer = 5,
     shader_module = 6,
+    texture = 7,
+    texture_view = 8,
+    sampler = 9,
+    bind_group_layout = 10,
+    bind_group = 11,
+    pipeline_layout = 12,
+    compute_pipeline = 13,
+    render_pipeline = 14,
+    command_encoder = 15,
+    command_buffer = 16,
+    render_pass_encoder = 17,
+    compute_pass_encoder = 18,
+    query_set = 19,
     // TODO: Add other WebGPU object types here as they are introduced
 };
 
@@ -82,25 +108,141 @@ pub const ShaderModuleDescriptor = extern struct {
     // If other shader types were supported via FFI, a tagged union or similar might be here.
     wgsl_code: ShaderModuleWGSLDescriptor,
 
-    pub fn newFromWGSL(wgsl_source: []const u8) ShaderModuleDescriptor {
-        return ShaderModuleDescriptor{
-            .label = null,
-            .wgsl_code = ShaderModuleWGSLDescriptor{
-                .code_ptr = wgsl_source.ptr,
-                .code_len = wgsl_source.len,
-            },
-        };
-    }
+    // DEPRECATED: newFromWGSL and newFromWGSLabeled. Use direct struct initialization.
+    // pub fn newFromWGSL(wgsl_source: []const u8) ShaderModuleDescriptor {
+    //     return ShaderModuleDescriptor{
+    //         .label = null,
+    //         .wgsl_code = ShaderModuleWGSLDescriptor{
+    //             .code_ptr = wgsl_source.ptr,
+    //             .code_len = wgsl_source.len,
+    //         },
+    //     };
+    // }
+    //
+    // pub fn newFromWGSLabeled(label_text: ?[*:0]const u8, wgsl_source: []const u8) ShaderModuleDescriptor {
+    //     return ShaderModuleDescriptor{
+    //         .label = label_text,
+    //         .wgsl_code = ShaderModuleWGSLDescriptor{
+    //             .code_ptr = wgsl_source.ptr,
+    //             .code_len = wgsl_source.len,
+    //         },
+    //     };
+    // }
+};
 
-    pub fn newFromWGSLabeled(label_text: ?[*:0]const u8, wgsl_source: []const u8) ShaderModuleDescriptor {
-        return ShaderModuleDescriptor{
-            .label = label_text,
-            .wgsl_code = ShaderModuleWGSLDescriptor{
-                .code_ptr = wgsl_source.ptr,
-                .code_len = wgsl_source.len,
-            },
-        };
-    }
+// Texture Related Enums and Structs (matching WebGPU spec)
+
+/// Corresponds to GPUTextureDimension
+pub const TextureDimension = enum(u32) {
+    @"1d" = 0,
+    @"2d" = 1,
+    @"3d" = 2,
+    // Removed fromStr and toJsStringId to avoid std dependency here
+};
+
+/// Corresponds to GPUTextureFormat
+/// This is a partial list. Many more formats exist.
+pub const TextureFormat = enum(u32) {
+    // 8-bit formats
+    r8unorm = 0,
+    r8snorm = 1,
+    r8uint = 2,
+    r8sint = 3,
+    // 16-bit formats
+    r16uint = 4,
+    r16sint = 5,
+    r16float = 6,
+    rg8unorm = 7,
+    rg8snorm = 8,
+    rg8uint = 9,
+    rg8sint = 10,
+    // 32-bit formats
+    r32uint = 11,
+    r32sint = 12,
+    r32float = 13,
+    rg16uint = 14,
+    rg16sint = 15,
+    rg16float = 16,
+    rgba8unorm = 17,
+    rgba8unorm_srgb = 18,
+    rgba8snorm = 19,
+    rgba8uint = 20,
+    rgba8sint = 21,
+    bgra8unorm = 22,
+    bgra8unorm_srgb = 23,
+    // More formats...
+    rgb9e5ufloat = 24,
+    rgb10a2unorm = 25,
+    rg11b10ufloat = 26,
+    // 64-bit formats
+    rg32uint = 27,
+    rg32sint = 28,
+    rg32float = 29,
+    rgba16uint = 30,
+    rgba16sint = 31,
+    rgba16float = 32,
+    // 128-bit formats
+    rgba32uint = 33,
+    rgba32sint = 34,
+    rgba32float = 35,
+    // Depth/stencil formats
+    stencil8 = 36,
+    depth16unorm = 37,
+    depth24plus = 38,
+    depth24plus_stencil8 = 39,
+    depth32float = 40,
+    depth32float_stencil8 = 41, // If feature "depth32float-stencil8" is enabled
+
+    // BC compressed formats (feature: "texture-compression-bc")
+    // ASTC compressed formats (feature: "texture-compression-astc")
+    // ETC2 compressed formats (feature: "texture-compression-etc2")
+
+    // Removed toJsStringId
+};
+
+pub const Extent3D = extern struct { // Corresponds to GPUExtent3DDict
+    width: u32, // GPUIntegerCoordinate
+    height: u32 = 1, // GPUIntegerCoordinate
+    depth_or_array_layers: u32 = 1, // GPUIntegerCoordinate
+};
+
+pub const TextureDescriptor = extern struct {
+    label: ?[*:0]const u8,
+    size: Extent3D,
+    mip_level_count: u32 = 1, // GPUIntegerCoordinate
+    sample_count: u32 = 1, // GPUIntegerCoordinate
+    dimension: TextureDimension = .@"2d", // GPUTextureDimension, pass as u32 id
+    format: TextureFormat, // GPUTextureFormat, pass as u32 id
+    usage: u32, // GPUTextureUsageFlags (bitmask)
+    view_formats: ?[*]const TextureFormat = null, // Optional: Pointer to array of TextureFormat enums
+    view_formats_count: usize = 0,
+};
+
+pub const GPUTextureUsage = struct { // GPUTextureUsageFlags
+    pub const COPY_SRC = 0x01;
+    pub const COPY_DST = 0x02;
+    pub const TEXTURE_BINDING = 0x04; // aka SAMPLED
+    pub const STORAGE_BINDING = 0x08;
+    pub const RENDER_ATTACHMENT = 0x10;
+};
+
+/// Corresponds to GPUTextureAspect
+pub const TextureAspect = enum(u32) {
+    all = 0,
+    stencil_only = 1,
+    depth_only = 2,
+    // Removed toJsStringId
+};
+
+pub const TextureViewDescriptor = extern struct {
+    label: ?[*:0]const u8,
+    format: ?TextureFormat = null, // Optional: GPUTextureFormat, pass u32 id
+    dimension: ?TextureDimension = null, // Optional: GPUTextureViewDimension, pass u32 id
+    aspect: TextureAspect = .all, // GPUTextureAspect, pass u32 id
+    base_mip_level: u32 = 0, // GPUIntegerCoordinate
+    mip_level_count: ?u32 = null, // Optional: GPUIntegerCoordinate
+    base_array_layer: u32 = 0, // GPUIntegerCoordinate
+    array_layer_count: ?u32 = null, // Optional: GPUIntegerCoordinate
 };
 
 // --- FFI Imports (JavaScript functions Zig will call) ---
@@ -129,6 +271,10 @@ extern "env" fn env_wgpu_device_get_queue_js(device_handle: Device) Queue;
 // New FFI imports for buffer and shader module
 extern "env" fn env_wgpu_device_create_buffer_js(device_handle: Device, descriptor_ptr: *const BufferDescriptor) Buffer;
 extern "env" fn env_wgpu_device_create_shader_module_js(device_handle: Device, descriptor_ptr: *const ShaderModuleDescriptor) ShaderModule;
+
+// New FFI for Texture and TextureView
+extern "env" fn env_wgpu_device_create_texture_js(device_handle: Device, descriptor_ptr: *const TextureDescriptor) Texture;
+extern "env" fn env_wgpu_texture_create_view_js(texture_handle: Texture, descriptor_ptr: ?*const TextureViewDescriptor) TextureView;
 
 extern "env" fn env_wgpu_get_last_error_msg_ptr_js() [*c]const u8;
 extern "env" fn env_wgpu_get_last_error_msg_len_js() usize;
@@ -316,3 +462,34 @@ pub const GeneralWebGPUError = error{
     InvalidHandle,
     OperationFailed,
 };
+
+pub fn deviceCreateTexture(device_handle: Device, descriptor: *const TextureDescriptor) !Texture {
+    log("Creating WebGPU Texture (Zig FFI wrapper)...");
+    if (device_handle == 0) {
+        log("E00: Invalid device handle (0) passed to deviceCreateTexture.");
+        return error.InvalidHandle;
+    }
+    const texture_handle = env_wgpu_device_create_texture_js(device_handle, descriptor);
+    if (texture_handle == 0) {
+        getAndLogWebGPUError("E12: Failed to create texture (JS texture_handle is 0). ");
+        return error.OperationFailed;
+    }
+    log("Texture created via Zig FFI wrapper.");
+    return texture_handle;
+}
+
+pub fn textureCreateView(texture_handle: Texture, descriptor: ?*const TextureViewDescriptor) !TextureView {
+    log("Creating WebGPU Texture View (Zig FFI wrapper)...");
+    if (texture_handle == 0) {
+        log("E00: Invalid texture handle (0) passed to textureCreateView.");
+        return error.InvalidHandle;
+    }
+    // The descriptor can be null for a default view. JS side must handle null descriptor_ptr.
+    const view_handle = env_wgpu_texture_create_view_js(texture_handle, descriptor);
+    if (view_handle == 0) {
+        getAndLogWebGPUError("E13: Failed to create texture view (JS view_handle is 0). ");
+        return error.OperationFailed;
+    }
+    log("Texture view created via Zig FFI wrapper.");
+    return view_handle;
+}

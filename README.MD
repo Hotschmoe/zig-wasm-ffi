@@ -96,11 +96,13 @@ zig-wasm-ffi/
 │   ├── webgpu.zig       # WebGPU bindings
 │   ├── webaudio.zig     # Web Audio bindings
 │   ├── webinput.zig     # Web Input bindings
+│   ├── webutils.zig     # Common utility bindings (e.g., logging)
 │   ├── webinput.test.zig # Unit tests for webinput.zig (uses std for testing)
 ├── js/
 │   ├── webgpu.js        # WebGPU glue
 │   ├── webaudio.js      # Web Audio glue
 │   ├── webinput.js      # Web Input glue
+│   ├── webutils.js      # Common utility glue
 ├── build.zig.zon        # Module metadata
 ├── build.zig            # Build configuration
 ├── README.md            # Project documentation (this file)
@@ -109,12 +111,12 @@ zig-wasm-ffi/
 ```
 
 - **src/**:
-  - `lib.zig`: Entry point, exports API namespaces (e.g., `pub const webaudio = @import("webaudio.zig")`) to allow granular access for DCE.
-  - `webgpu.zig`, `webaudio.zig`, `webinput.zig`: Individual API bindings, ensuring unused APIs are stripped from the WASM binary.
-  - `webinput.test.zig`: Unit tests for `webinput.zig` using `std` for testing.
+  - `lib.zig`: Entry point, exports API namespaces (e.g., `pub const webaudio = @import("webaudio.zig"); pub const webutils = @import("webutils.zig");`) to allow granular access for DCE.
+  - `webgpu.zig`, `webaudio.zig`, `webinput.zig`, `webutils.zig`: Individual API bindings (and utilities), ensuring unused APIs/utils are stripped from the WASM binary.
+  - `webinput.test.zig`: Unit tests for `webinput.zig` using `std` for testing. (Similarly, `webutils.test.zig` would be for `webutils.zig`).
   - `webgraphics_glue.js`: Example JavaScript glue for a graphics module (if it existed).
 - **js/**:
-  - `webgpu.js`, `webaudio.js`, `webinput.js`: JavaScript glue files for FFI, containing minimal API calls (e.g., `export function createAudioContext() { return new AudioContext(); }`).
+  - `webgpu.js`, `webaudio.js`, `webinput.js`, `webutils.js`: JavaScript glue files for FFI.
   - `webinput_glue.js`: JavaScript glue code for `webinput.zig`.
 - **zig.zon**: Defines the module and version.
 - **build.zig**: Configures the module and copies only user-specified glue files to `dist/`.
@@ -207,7 +209,12 @@ zig-wasm-ffi/
    - **Files**: `src/webxr.zig`, `js/webxr.js`.
    - **Use Case**: VR/AR game experiences.
 
-**Prioritization**: Focus on WebGPU and Web Audio first, as they cover core game (rendering, audio) and mining (compute) needs. Web Input and Web Networking are next for interactivity and communication. Others (Web Storage, Web Workers, etc.) will follow based on community demand.
+10. **Web Utilities** (New):
+    - **Purpose**: Common browser interactions, e.g., `console.log` via FFI.
+    - **Files**: `src/webutils.zig`, `js/webutils.js`.
+    - **Status**: Newly added, providing basic logging.
+
+**Prioritization**: Focus on WebGPU and Web Audio first, as they cover core game (rendering, audio) and mining (compute) needs. Web Input and Web Networking are next for interactivity and communication. Common utilities like logging (`webutils`) will be developed alongside. Others (Web Storage, Web Workers, etc.) will follow based on community demand.
 
 ## Getting Started
 
@@ -255,10 +262,11 @@ zig-wasm-ffi/
        b.installArtifact(exe);
 
        // Specify used APIs
-       const used_apis = [_][]const u8{ "webaudio", "webinput" };
+       const used_apis = [_][]const u8{ "webaudio", "webinput", "webutils" };
        const api_glue = [_]struct { name: []const u8, js_file: []const u8 }{
            .{ .name = "webaudio", .js_file = "js/webaudio.js" },
            .{ .name = "webinput", .js_file = "js/webinput.js" },
+           .{ .name = "webutils", .js_file = "js/webutils.js" },
        };
        for (used_apis) |api| {
            for (api_glue) |glue| {
@@ -282,6 +290,9 @@ zig-wasm-ffi/
            } else if (std.mem.eql(u8, api, "webinput")) {
                try imports.writer().print("import {{ getGamepads }} from './webinput.js';\n", .{});
                try env.writer().print("            getGamepads,\n", .{});
+           } else if (std.mem.eql(u8, api, "webutils")) {
+               try imports.writer().print("import {{ js_log }} from './webutils.js';\n", .{});
+               try env.writer().print("            js_log,\n", .{});
            }
        }
        const main_js = gen_step.add("main.js", try std.fmt.allocPrint(b.allocator,
@@ -312,6 +323,7 @@ zig-wasm-ffi/
    pub fn main() !void {
        const ctx = try wasm_ffi.webaudio.createAudioContext();
        const gamepads = wasm_ffi.webinput.getGamepads();
+       wasm_ffi.webutils.log("Hello from Zig!");
        // Use ctx and gamepads
    }
    ```
@@ -337,10 +349,11 @@ zig-wasm-ffi/
    - Output in `dist/`:
      ```
      dist/
-     ├── app.wasm      # Only webaudio and webinput code
-     ├── main.js       # Imports webaudio.js, webinput.js
+     ├── app.wasm      # Only webaudio and webinput code (and webutils if used)
+     ├── main.js       # Imports webaudio.js, webinput.js (and webutils.js if used)
      ├── webaudio.js
      ├── webinput.js
+     ├── webutils.js   # Added webutils.js
      ├── index.html
      ```
    - Serve with nginx:
@@ -376,6 +389,7 @@ if (b.option(bool, "release", "Build for production") orelse false) {
         "dist/main.js",
         "dist/webaudio.js",
         "dist/webinput.js",
+        "dist/webutils.js",
         "--outdir",
         "dist",
         "--minify",
