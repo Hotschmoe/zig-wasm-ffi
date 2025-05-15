@@ -13,5 +13,5 @@ test {
     _ = @import("webinput.test.zig");
 
     // If other modules also have their own .test.zig files:
-    // _ = @import("webaudio.test.zig");
+    _ = @import("webaudio.test.zig");
 }
