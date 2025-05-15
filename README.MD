@@ -96,25 +96,40 @@ zig-wasm-ffi/
 │   ├── webgpu.zig       # WebGPU bindings
 │   ├── webaudio.zig     # Web Audio bindings
 │   ├── webinput.zig     # Web Input bindings
+│   ├── webinput.test.zig # Unit tests for webinput.zig (uses std for testing)
 ├── js/
 │   ├── webgpu.js        # WebGPU glue
 │   ├── webaudio.js      # Web Audio glue
 │   ├── webinput.js      # Web Input glue
-├── zig.zon              # Module metadata
+├── build.zig.zon        # Module metadata
 ├── build.zig            # Build configuration
 ├── README.md            # Project documentation (this file)
 ├── LICENSE              # MIT license
+└── README.md            # This file
 ```
 
 - **src/**:
   - `lib.zig`: Entry point, exports API namespaces (e.g., `pub const webaudio = @import("webaudio.zig")`) to allow granular access for DCE.
   - `webgpu.zig`, `webaudio.zig`, `webinput.zig`: Individual API bindings, ensuring unused APIs are stripped from the WASM binary.
+  - `webinput.test.zig`: Unit tests for `webinput.zig` using `std` for testing.
+  - `webgraphics_glue.js`: Example JavaScript glue for a graphics module (if it existed).
 - **js/**:
   - `webgpu.js`, `webaudio.js`, `webinput.js`: JavaScript glue files for FFI, containing minimal API calls (e.g., `export function createAudioContext() { return new AudioContext(); }`).
+  - `webinput_glue.js`: JavaScript glue code for `webinput.zig`.
 - **zig.zon**: Defines the module and version.
 - **build.zig**: Configures the module and copies only user-specified glue files to `dist/`.
 - **README.md**: Comprehensive guide (this file).
 - **LICENSE**: MIT license for open-source use.
+- **example/**:
+  - `build.zig`: Zig build script for the example project.
+  - `src/`:
+    - `main.zig`: Example application main logic.
+    - `input_handler.zig`: Example's application-level input handling using the `webinput` library.
+  - `web/`:
+    - `index.html`: HTML page for the example.
+    - `main.js`: JavaScript for the example using `webinput_glue.js`.
+- **zig-out/**: Build output including WASM files.
+- **zig-cache/**: Zig build system cache.
 
 ## Potential Pitfalls and Mitigations
 
@@ -372,6 +387,47 @@ if (b.option(bool, "release", "Build for production") orelse false) {
 }
 ```
 Run `zig build -Drelease` to produce a bundled `dist/main.js`.
+
+## Building
+
+To build the main WASM library (`zig_wasm_ffi.wasm`):
+
+```bash
+zig build wasm -Doptimize=ReleaseSmall # Or ReleaseFast, Debug
+```
+
+This will place the output in `zig-out/bin/zig_wasm_ffi.wasm`.
+
+To build the example project:
+
+```bash
+cd example
+zig build -Doptimize=ReleaseSmall # Or ReleaseFast, Debug
+```
+
+This will create `example/zig-out/bin/example.wasm`.
+
+## Testing
+
+Unit tests for library modules are typically co-located with the code they test. For example, tests for `src/webinput.zig` are placed in `src/webinput.test.zig`. These are then aggregated by a `test {}` block in `src/lib.zig`.
+
+There are two primary ways to run these tests:
+
+1.  **Using the build system (recommended for CI and general checks):**
+    ```bash
+    zig build test
+    ```
+    This command compiles and executes all tests defined and included by the build process. 
+    *   **Output**: It's typically silent if all tests pass, only producing output if there are failures or compilation errors. This makes it ideal for automated checks (like in Continuous Integration pipelines).
+
+2.  **Running tests directly on a source file (good for direct feedback during development):**
+    ```bash
+    zig test src/lib.zig
+    ```
+    This command directly invokes the test runner on `src/lib.zig`, which in turn imports and runs the tests from `src/webinput.test.zig` (and any other `*.test.zig` files you include in `src/lib.zig`'s test block).
+    *   **Output**: It provides more verbose output, explicitly stating the number of tests run and confirming if all passed (e.g., "All 9 tests passed."). This is often preferred during active development for immediate confirmation.
+
+Both methods will execute the same set of tests defined in your `*.test.zig` files and included via `src/lib.zig`.
 
 ## Contributing
 

@@ -51,8 +51,8 @@
 // }
 
 // --- Configuration ---
-const MAX_KEY_CODES: usize = 256;
-const MAX_MOUSE_BUTTONS: usize = 5; // 0:Left, 1:Middle, 2:Right, 3:Back, 4:Forward
+pub const MAX_KEY_CODES: usize = 256;
+pub const MAX_MOUSE_BUTTONS: usize = 5; // 0:Left, 1:Middle, 2:Right, 3:Back, 4:Forward
 
 // --- Mouse State ---
 const MouseState = struct {
@@ -203,3 +203,25 @@ pub fn was_key_just_released(key_code: u32) bool {
 // pub extern "env" fn platform_get_gamepad_count() u32;
 // etc.
 // And public Zig functions would wrap these calls.
+
+// --- Test Utilities ---
+// This function is intended for use in test environments to reset the global state.
+pub fn testing_reset_internal_state_for_tests() void {
+    // Reset mouse state
+    g_mouse_state.x = 0.0;
+    g_mouse_state.y = 0.0;
+    g_mouse_state.wheel_delta_x = 0.0;
+    g_mouse_state.wheel_delta_y = 0.0;
+    var i_mouse: usize = 0;
+    while (i_mouse < MAX_MOUSE_BUTTONS) : (i_mouse += 1) {
+        g_mouse_state.buttons_down[i_mouse] = false;
+        g_mouse_state.prev_buttons_down[i_mouse] = false;
+    }
+
+    // Reset keyboard state
+    var i_key: usize = 0;
+    while (i_key < MAX_KEY_CODES) : (i_key += 1) {
+        g_keyboard_state.keys_down[i_key] = false;
+        g_keyboard_state.prev_keys_down[i_key] = false;
+    }
+}
