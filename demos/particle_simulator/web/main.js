@@ -3,7 +3,7 @@
 // 1. Import all POTENTIAL glue modules.
 import * as webinput from './webinput.js'; 
 // import * as webaudio from './webaudio.js'; // Example: User would uncomment to use
-import * as webgpu from './webgpu.js';   // Assuming this is used based on original imports
+import { webGPUNativeImports } from './webgpu.js';   // Import the specific object
 
 let wasmInstance = null;
 let canvasElement = null;
@@ -26,10 +26,10 @@ const activeModules = [
     // },
     {
         name: "WebGPU",
-        glue: webgpu, // Assuming 'webgpu' is the imported module
-        providesToZig: true, // True if webgpu.js exports env_ functions for Zig
-        jsSetupFunction: webgpu.setupWebGPU, // Assuming setupWebGPU exists or will exist
-        jsSetupArgs: (instance, canvasEl) => [instance, canvasEl] // Example args
+        glue: webGPUNativeImports, // Use the imported object directly
+        providesToZig: true, // True as webGPUNativeImports contains env_ functions
+        // jsSetupFunction: webgpu.setupWebGPU, // Removed, FFI functions are called from Zig
+        // jsSetupArgs: (instance, canvasEl) => [instance, canvasEl] 
     }
 ];
 
@@ -65,28 +65,20 @@ async function initWasm() {
     resizeCanvas(); 
 
     const envImports = {
-        js_log_string: (messagePtr, messageLen) => {
-            if (!wasmInstance || !wasmInstance.exports.memory) {
-                console.error("[Main.js] js_log_string: Wasm instance or memory not available.");
-                return;
-            }
-            try {
-                const memoryBuffer = wasmInstance.exports.memory.buffer;
-                const textDecoder = new TextDecoder('utf-8');
-                const messageBytes = new Uint8Array(memoryBuffer, messagePtr, messageLen);
-                const message = textDecoder.decode(messageBytes);
-                console.log("Zig:", message);
-            } catch (e) {
-                console.error("[Main.js] Error in js_log_string:", e);
-            }
-        }
+        // js_log_string is now part of webGPUNativeImports and will be added by the loop below
     };
 
     for (const mod of activeModules) {
         if (mod.providesToZig && mod.glue) {
             for (const key in mod.glue) {
-                if (Object.prototype.hasOwnProperty.call(mod.glue, key) && key.startsWith("env_")) {
-                    envImports[key] = mod.glue[key];
+                if (Object.prototype.hasOwnProperty.call(mod.glue, key) && (key.startsWith("env_") || key === "js_log_string")) { // Include js_log_string if defined in glue
+                    if (typeof mod.glue[key] === 'function') {
+                        envImports[key] = mod.glue[key].bind(mod.glue); // Bind `this` to mod.glue
+                    } else {
+                        // If it's not a function (e.g., wasmMemory itself), don't try to bind it.
+                        // Though wasmMemory is not an env_ function, so this path shouldn't be taken for it.
+                        envImports[key] = mod.glue[key];
+                    }
                 }
             }
         }
@@ -102,6 +94,13 @@ async function initWasm() {
         const { instance } = await WebAssembly.instantiateStreaming(response, importObject);
         wasmInstance = instance;
         console.log("[Main.js] Wasm module instantiated.");
+
+        // CRITICAL STEP: Set the wasmMemory for the JS glue functions that need it
+        // This is done on the original imported object, which the bound functions will reference.
+        if (webGPUNativeImports.wasmMemory !== undefined) { // Check if the property exists
+            webGPUNativeImports.wasmMemory = wasmInstance.exports.memory;
+            console.log("[Main.js] Wasm memory assigned to webGPUNativeImports.");
+        }
         
         for (const mod of activeModules) {
             if (mod.jsSetupFunction && typeof mod.jsSetupFunction === 'function') {
@@ -119,8 +118,11 @@ async function initWasm() {
         if (wasmInstance.exports && wasmInstance.exports._start) {
             wasmInstance.exports._start();
             console.log("[Main.js] WASM module '_start' function called.");
+        } else if (wasmInstance.exports && wasmInstance.exports.main) { // Fallback to 'main' if '_start' not found
+            wasmInstance.exports.main();
+            console.log("[Main.js] WASM module 'main' function called.");
         } else {
-            console.error("[Main.js] WASM module does not export an '_start' function or exports object is missing.");
+            console.error("[Main.js] WASM module does not export an '_start' or 'main' function or exports object is missing.");
         }
 
         window.addEventListener('resize', resizeCanvas);
