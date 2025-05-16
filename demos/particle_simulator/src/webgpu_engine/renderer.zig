@@ -355,11 +355,17 @@ pub const Renderer = struct {
     fn createShaderModule(self: *Renderer, device: webgpu.Device, code: []const u8, label: []const u8) !webgpu.ShaderModule {
         _ = self; // self not used yet, but might be if allocator needed for label clone
         const desc = webgpu.ShaderModuleDescriptor{
-            .label = label,
-            .code = code,
+            .label = if (label.len == 0) null else @as([*:0]const u8, @ptrCast(label.ptr)),
+            .wgsl_code = webgpu.ShaderModuleWGSLDescriptor{
+                .code_ptr = code.ptr,
+                .code_len = code.len,
+            },
         };
         return webgpu.deviceCreateShaderModule(device, &desc) catch |err| {
-            webutils.log("ERROR: Failed to create shader module '" ++ label ++ "': " ++ @errorName(err)); // Adjusted log
+            webutils.log("ERROR: Failed to create shader module '");
+            webutils.log(label);
+            webutils.log("': ");
+            webutils.log(@errorName(err));
             return RendererError.ShaderModuleCreationError;
         };
     }

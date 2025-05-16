@@ -340,13 +340,13 @@ pub extern "env" fn env_wgpu_adapter_request_device_js(adapter_handle: Adapter) 
 
 // Synchronous Resource Creation & Operations (Zig -> JS)
 pub extern "env" fn env_wgpu_device_get_queue_js(device_handle: Device) callconv(.C) Queue;
-pub extern "env" fn env_wgpu_device_create_buffer_js(device_handle: Device, descriptor_ptr: [*]const BufferDescriptor) callconv(.C) Buffer;
+pub extern "env" fn env_wgpu_device_create_buffer_js(device_handle: Device, descriptor_ptr: *const BufferDescriptor) callconv(.C) Buffer;
 pub extern "env" fn env_wgpu_queue_write_buffer_js(queue_handle: Queue, buffer_handle: Buffer, buffer_offset: u64, data_ptr: [*]const u8, data_size: usize) callconv(.C) void;
-pub extern "env" fn env_wgpu_device_create_shader_module_js(device_handle: Device, descriptor_ptr: [*]const ShaderModuleDescriptor) callconv(.C) ShaderModule;
-pub extern "env" fn env_wgpu_device_create_texture_js(device_handle: Device, descriptor_ptr: [*]const TextureDescriptor) callconv(.C) Texture;
-pub extern "env" fn env_wgpu_texture_create_view_js(texture_handle: Texture, descriptor_ptr: ?[*]const TextureViewDescriptor) callconv(.C) TextureView;
-pub extern "env" fn env_wgpu_device_create_bind_group_layout_js(device_handle: Device, descriptor_ptr: [*]const BindGroupLayoutDescriptor) callconv(.C) BindGroupLayout;
-pub extern "env" fn env_wgpu_device_create_bind_group_js(device_handle: Device, descriptor_ptr: [*]const BindGroupDescriptor) callconv(.C) BindGroup;
+pub extern "env" fn env_wgpu_device_create_shader_module_js(device_handle: Device, descriptor_ptr: *const ShaderModuleDescriptor) callconv(.C) ShaderModule;
+pub extern "env" fn env_wgpu_device_create_texture_js(device_handle: Device, descriptor_ptr: *const TextureDescriptor) callconv(.C) Texture;
+pub extern "env" fn env_wgpu_texture_create_view_js(texture_handle: Texture, descriptor_ptr: ?*const TextureViewDescriptor) callconv(.C) TextureView;
+pub extern "env" fn env_wgpu_device_create_bind_group_layout_js(device_handle: Device, descriptor_ptr: *const BindGroupLayoutDescriptor) callconv(.C) BindGroupLayout;
+pub extern "env" fn env_wgpu_device_create_bind_group_js(device_handle: Device, descriptor_ptr: *const BindGroupDescriptor) callconv(.C) BindGroup;
 
 // Error Handling & Release
 pub extern "env" fn env_wgpu_get_last_error_msg_ptr_js() u32;
@@ -482,23 +482,18 @@ pub fn deviceCreateBuffer(device_handle: Device, descriptor: *const BufferDescri
         webutils.log("E00: Invalid device handle (0) passed to deviceCreateBuffer.");
         return error.InvalidHandle;
     }
-    if (descriptor == null) {
-        webutils.log("E00: Invalid descriptor (null) passed to deviceCreateBuffer.");
-        return error.InvalidDescriptor;
-    }
     const buffer_handle = env_wgpu_device_create_buffer_js(device_handle, descriptor);
     if (buffer_handle == 0) {
         getAndLogWebGPUError("E11: Failed to create buffer (JS buffer_handle is 0). ");
         return error.OperationFailed;
     }
-    webutils.logV("Buffer created with handle: {d}", .{buffer_handle});
+    webutils.log("Buffer created.");
     return buffer_handle;
 }
 
 pub fn queueWriteBuffer(queue_handle: Queue, buffer_handle: Buffer, buffer_offset: u64, data: []const u8) !void {
-    webutils.logV(
-        "Writing to WebGPU Buffer (Zig FFI wrapper). Queue: {d}, Buffer: {d}, Offset: {d}, Data Size: {d}",
-        .{ queue_handle, buffer_handle, buffer_offset, data.len },
+    webutils.log(
+        "Writing to WebGPU Buffer (Zig FFI wrapper).",
     );
     if (queue_handle == 0 or buffer_handle == 0) {
         webutils.log("E00: Invalid handle (0) for queue or buffer passed to queueWriteBuffer.");
@@ -515,16 +510,12 @@ pub fn deviceCreateShaderModule(device_handle: Device, descriptor: *const Shader
         webutils.log("E00: Invalid device handle (0) passed to deviceCreateShaderModule.");
         return error.InvalidHandle;
     }
-    if (descriptor == null) {
-        webutils.log("E00: Invalid descriptor (null) passed to deviceCreateShaderModule.");
-        return error.InvalidDescriptor;
-    }
     const sm_handle = env_wgpu_device_create_shader_module_js(device_handle, descriptor);
     if (sm_handle == 0) {
         getAndLogWebGPUError("E12: Failed to create shader module (JS sm_handle is 0). ");
         return error.OperationFailed;
     }
-    webutils.logV("Shader module created with handle: {d}", .{sm_handle});
+    webutils.log("Shader module created.");
     return sm_handle;
 }
 
@@ -573,21 +564,17 @@ pub fn deviceCreateTexture(device_handle: Device, descriptor: *const TextureDesc
         webutils.log("E00: Invalid device handle (0) passed to deviceCreateTexture.");
         return error.InvalidHandle;
     }
-    if (descriptor == null) {
-        webutils.log("E00: Invalid descriptor (null) passed to deviceCreateTexture.");
-        return error.InvalidDescriptor;
-    }
     const tex_handle = env_wgpu_device_create_texture_js(device_handle, descriptor);
     if (tex_handle == 0) {
         getAndLogWebGPUError("E13: Failed to create texture (JS tex_handle is 0). ");
         return error.OperationFailed;
     }
-    webutils.logV("Texture created with handle: {d}", .{tex_handle});
+    webutils.log("Texture created.");
     return tex_handle;
 }
 
 pub fn textureCreateView(texture_handle: Texture, descriptor: ?*const TextureViewDescriptor) !TextureView {
-    webutils.logV("Creating WebGPU Texture View for texture {d} (Zig FFI wrapper)...", .{texture_handle});
+    webutils.log("Creating WebGPU Texture View (Zig FFI wrapper)...");
     if (texture_handle == 0) {
         webutils.log("E00: Invalid texture handle (0) passed to textureCreateView.");
         return error.InvalidHandle;
@@ -597,7 +584,7 @@ pub fn textureCreateView(texture_handle: Texture, descriptor: ?*const TextureVie
         getAndLogWebGPUError("E14: Failed to create texture view (JS tv_handle is 0). ");
         return error.OperationFailed;
     }
-    webutils.logV("Texture View created with handle: {d}", .{tv_handle});
+    webutils.log("Texture View created.");
     return tv_handle;
 }
 
@@ -607,8 +594,8 @@ pub fn deviceCreateBindGroupLayout(device_handle: Device, descriptor: *const Bin
         webutils.log("E00: Invalid device handle (0) passed to deviceCreateBindGroupLayout.");
         return error.InvalidHandle;
     }
-    if (descriptor == null or descriptor.entries.ptr == null and descriptor.entries_len > 0) {
-        webutils.log("E00: Invalid descriptor (null, or null entries with non-zero length) passed to deviceCreateBindGroupLayout.");
+    if (descriptor.entries_len > 0 and descriptor.entries == null) {
+        webutils.log("E00: Invalid descriptor (null entries with non-zero length) passed to deviceCreateBindGroupLayout.");
         return error.InvalidDescriptor;
     }
     const bgl_handle = env_wgpu_device_create_bind_group_layout_js(device_handle, descriptor);
@@ -616,7 +603,7 @@ pub fn deviceCreateBindGroupLayout(device_handle: Device, descriptor: *const Bin
         getAndLogWebGPUError("E15: Failed to create bind group layout (JS bgl_handle is 0). ");
         return error.OperationFailed;
     }
-    webutils.logV("BindGroupLayout created with handle: {d}", .{bgl_handle});
+    webutils.log("BindGroupLayout created.");
     return bgl_handle;
 }
 
@@ -626,8 +613,8 @@ pub fn deviceCreateBindGroup(device_handle: Device, descriptor: *const BindGroup
         webutils.log("E00: Invalid device handle (0) passed to deviceCreateBindGroup.");
         return error.InvalidHandle;
     }
-    if (descriptor == null or descriptor.entries.ptr == null and descriptor.entries_len > 0) {
-        webutils.log("E00: Invalid descriptor (null, or null entries with non-zero length) passed to deviceCreateBindGroup.");
+    if (descriptor.entries_len > 0 and descriptor.entries == null) {
+        webutils.log("E00: Invalid descriptor (null entries with non-zero length) passed to deviceCreateBindGroup.");
         return error.InvalidDescriptor;
     }
     const bg_handle = env_wgpu_device_create_bind_group_js(device_handle, descriptor);
@@ -635,7 +622,7 @@ pub fn deviceCreateBindGroup(device_handle: Device, descriptor: *const BindGroup
         getAndLogWebGPUError("E16: Failed to create bind group (JS bg_handle is 0). ");
         return error.OperationFailed;
     }
-    webutils.logV("BindGroup created with handle: {d}", .{bg_handle});
+    webutils.log("BindGroup created.");
     return bg_handle;
 }
 
