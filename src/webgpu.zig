@@ -264,44 +264,65 @@ pub const BufferBindingType = enum(u32) { // Corresponds to GPUBufferBindingType
 };
 
 pub const BufferBindingLayout = extern struct { // Corresponds to GPUBufferBindingLayout
-    type: BufferBindingType = .uniform,
-    has_dynamic_offset: bool = false,
-    min_binding_size: u64 = 0, // GPUSize64
-};
-
-// TODO: SamplerBindingLayout, TextureBindingLayout, StorageTextureBindingLayout, ExternalTextureBindingLayout
-// For now, focus on what Renderer.zig uses first: Buffer, Texture.
-
-pub const TextureSampleType = enum(u32) { // Corresponds to GPUTextureSampleType
-    float = 0,
-    unfilterable_float = 1,
-    depth = 2,
-    sint = 3,
-    uint = 4,
-    // JS strings: "float", "unfilterable-float", "depth", "sint", "uint"
+    type: BufferBindingType, // = .uniform,
+    has_dynamic_offset: bool, // = false,
+    min_binding_size: u64, // = 0, // GPUSize64
 };
 
 // Re-using TextureDimension for view_dimension for now. WebGPU spec has GPUTextureViewDimension
 // which includes "1d", "2d", "2d-array", "cube", "cube-array", "3d".
 // Our TextureDimension only has 1d, 2d, 3d. This might need a separate enum if advanced views are used.
 pub const TextureBindingLayout = extern struct { // Corresponds to GPUTextureBindingLayout
-    sample_type: TextureSampleType = .float,
-    view_dimension: TextureDimension = .@"2d", // This should be TextureViewDimension type
-    multisampled: bool = false,
+    sample_type: TextureSampleType, // = .float,
+    view_dimension: TextureDimension, // = .@"2d", // This should be TextureViewDimension type
+    multisampled: bool, // = false,
 };
 
 // More specific enums needed for StorageTextureBindingLayout if used (e.g. StorageTextureAccess)
 // pub const StorageTextureAccess = enum(u32) { write_only = 0, read_only = 1, read_write = 2 };
 // pub const StorageTextureBindingLayout = extern struct { ... }
 
+pub const BGLResourceType = enum(u32) {
+    buffer = 0,
+    texture = 1,
+    sampler = 2, // Placeholder for future use
+    storage_texture = 3, // Placeholder for future use
+    external_texture = 4, // Placeholder for future use
+};
+
 pub const BindGroupLayoutEntry = extern struct { // Corresponds to GPUBindGroupLayoutEntry
     binding: u32, // GPUIndex32
     visibility: u32, // GPUShaderStageFlags (bitmask of ShaderStage constants)
-    buffer: ?BufferBindingLayout = null, // Optional: GPUBufferBindingLayout
-    // sampler: ?SamplerBindingLayout = null, // TODO
-    texture: ?TextureBindingLayout = null, // Optional: GPUTextureBindingLayout
-    // storage_texture: ?StorageTextureBindingLayout = null, // TODO
-    // external_texture: ?ExternalTextureBindingLayout = null, // TODO
+    resource_type: BGLResourceType,
+    layout: ResourceLayout,
+
+    pub const ResourceLayout = extern union {
+        buffer: BufferBindingLayout,
+        texture: TextureBindingLayout,
+        // sampler: SamplerBindingLayout, // TODO for later
+        // storage_texture: StorageTextureBindingLayout, // TODO for later
+        // external_texture: ExternalTextureBindingLayout, // TODO for later
+    };
+
+    // Convenience constructors for Zig-side usage
+    pub fn newBuffer(binding_idx: u32, visibility_flags: u32, layout_details: BufferBindingLayout) BindGroupLayoutEntry {
+        return .{
+            .binding = binding_idx,
+            .visibility = visibility_flags,
+            .resource_type = .buffer,
+            .layout = .{ .buffer = layout_details },
+        };
+    }
+
+    pub fn newTexture(binding_idx: u32, visibility_flags: u32, layout_details: TextureBindingLayout) BindGroupLayoutEntry {
+        return .{
+            .binding = binding_idx,
+            .visibility = visibility_flags,
+            .resource_type = .texture,
+            .layout = .{ .texture = layout_details },
+        };
+    }
+    // TODO: Add constructors for sampler, storage_texture etc. when implemented
 };
 
 pub const BindGroupLayoutDescriptor = extern struct {
@@ -313,27 +334,26 @@ pub const BindGroupLayoutDescriptor = extern struct {
 // --- FFI Imports (JavaScript functions Zig will call) ---
 // These functions are expected to be provided in the JavaScript 'env' object during Wasm instantiation.
 
-extern "env" {
-    // Async Init (Zig -> JS -> Zig callback)
-    pub extern fn env_wgpu_request_adapter_js() void;
-    pub extern fn env_wgpu_adapter_request_device_js(adapter_handle: Adapter) void;
+// Async Init (Zig -> JS -> Zig callback)
+pub extern "env" fn env_wgpu_request_adapter_js() void;
+pub extern "env" fn env_wgpu_adapter_request_device_js(adapter_handle: Adapter) void;
 
-    // Synchronous Resource Creation & Operations (Zig -> JS)
-    pub extern fn env_wgpu_device_get_queue_js(device_handle: Device) callconv(.C) Queue;
-    pub extern fn env_wgpu_device_create_buffer_js(device_handle: Device, descriptor_ptr: [*]const BufferDescriptor) callconv(.C) Buffer;
-    pub extern fn env_wgpu_queue_write_buffer_js(queue_handle: Queue, buffer_handle: Buffer, buffer_offset: u64, data_ptr: [*]const u8, data_size: usize) callconv(.C) void;
-    pub extern fn env_wgpu_device_create_shader_module_js(device_handle: Device, descriptor_ptr: [*]const ShaderModuleDescriptor) callconv(.C) ShaderModule;
-    pub extern fn env_wgpu_device_create_texture_js(device_handle: Device, descriptor_ptr: [*]const TextureDescriptor) callconv(.C) Texture;
-    pub extern fn env_wgpu_texture_create_view_js(texture_handle: Texture, descriptor_ptr: ?[*]const TextureViewDescriptor) callconv(.C) TextureView;
-    pub extern fn env_wgpu_device_create_bind_group_layout_js(device_handle: Device, descriptor_ptr: [*]const BindGroupLayoutDescriptor) callconv(.C) BindGroupLayout;
-    pub extern fn env_wgpu_device_create_bind_group_js(device_handle: Device, descriptor_ptr: [*]const BindGroupDescriptor) callconv(.C) BindGroup;
+// Synchronous Resource Creation & Operations (Zig -> JS)
+pub extern "env" fn env_wgpu_device_get_queue_js(device_handle: Device) callconv(.C) Queue;
+pub extern "env" fn env_wgpu_device_create_buffer_js(device_handle: Device, descriptor_ptr: [*]const BufferDescriptor) callconv(.C) Buffer;
+pub extern "env" fn env_wgpu_queue_write_buffer_js(queue_handle: Queue, buffer_handle: Buffer, buffer_offset: u64, data_ptr: [*]const u8, data_size: usize) callconv(.C) void;
+pub extern "env" fn env_wgpu_device_create_shader_module_js(device_handle: Device, descriptor_ptr: [*]const ShaderModuleDescriptor) callconv(.C) ShaderModule;
+pub extern "env" fn env_wgpu_device_create_texture_js(device_handle: Device, descriptor_ptr: [*]const TextureDescriptor) callconv(.C) Texture;
+pub extern "env" fn env_wgpu_texture_create_view_js(texture_handle: Texture, descriptor_ptr: ?[*]const TextureViewDescriptor) callconv(.C) TextureView;
+pub extern "env" fn env_wgpu_device_create_bind_group_layout_js(device_handle: Device, descriptor_ptr: [*]const BindGroupLayoutDescriptor) callconv(.C) BindGroupLayout;
+pub extern "env" fn env_wgpu_device_create_bind_group_js(device_handle: Device, descriptor_ptr: [*]const BindGroupDescriptor) callconv(.C) BindGroup;
 
-    // Error Handling & Release
-    pub extern fn env_wgpu_get_last_error_msg_len_js() usize;
-    pub extern fn env_wgpu_copy_last_error_msg_js(buffer_ptr: [*c]u8, buffer_len: usize) void;
-    pub extern fn env_wgpu_release_handle_js(handle_type: HandleType, handle_id: u32) void;
-    // pub extern fn js_log_string(message_ptr: [*c]const u8, message_len: usize) void; // Now in webutils directly
-}
+// Error Handling & Release
+pub extern "env" fn env_wgpu_get_last_error_msg_ptr_js() u32;
+pub extern "env" fn env_wgpu_get_last_error_msg_len_js() usize;
+pub extern "env" fn env_wgpu_copy_last_error_msg_js(buffer_ptr: [*c]u8, buffer_len: usize) void;
+pub extern "env" fn env_wgpu_release_handle_js(handle_type: HandleType, handle_id: u32) void;
+// pub extern "env" fn js_log_string(message_ptr: [*c]const u8, message_len: usize) void; // Now in webutils directly
 
 // --- Zig functions exported to be called by JavaScript ---
 // These functions will be implemented by the application using this FFI library (e.g., in webgpu_handler.zig)
@@ -347,12 +367,6 @@ extern "env" {
 // pub export fn zig_receive_adapter(adapter_handle: Adapter, status: u32) void;
 // pub export fn zig_receive_device(device_handle: Device, status: u32) void;
 
-// --- Public API for Zig Application ---
-
-// pub fn log(message: []const u8) void {
-//     js_log_string(message.ptr, message.len);
-// }
-
 fn simple_min(a: u32, b: u32) u32 {
     return if (a < b) a else b;
 }
@@ -360,8 +374,10 @@ fn simple_min(a: u32, b: u32) u32 {
 // Logs an error message retrieved from JS FFI into a stack buffer.
 // Renamed to avoid conflict if application also has a getLastErrorMsg
 pub fn getAndLogWebGPUError(prefix: []const u8) void {
-    if (env_wgpu_get_last_error_msg_ptr_js() == 0) {
-        if (prefix.len > 0) webutils.log(prefix);
+    if (env_wgpu_get_last_error_msg_ptr_js() == 0) { // Check if JS has an error message prepared
+        if (prefix.len > 0) {
+            webutils.log(prefix);
+        }
         return;
     }
     const len = env_wgpu_get_last_error_msg_len_js();
@@ -519,11 +535,24 @@ pub fn releaseHandle(handle_type: HandleType, handle: u32) void {
     // Need to ensure JS side env_wgpu_release_handle_js expects these integer values correctly.
     const type_id_for_js: u32 = switch (handle_type) {
         // .promise => 1, // Removed
-        .adapter => 2,
-        .device => 3,
-        .queue => 4,
-        .buffer => 5,
-        .shader_module => 6,
+        .adapter => @intFromEnum(HandleType.adapter),
+        .device => @intFromEnum(HandleType.device),
+        .queue => @intFromEnum(HandleType.queue),
+        .buffer => @intFromEnum(HandleType.buffer),
+        .shader_module => @intFromEnum(HandleType.shader_module),
+        .texture => @intFromEnum(HandleType.texture),
+        .texture_view => @intFromEnum(HandleType.texture_view),
+        .sampler => @intFromEnum(HandleType.sampler),
+        .bind_group_layout => @intFromEnum(HandleType.bind_group_layout),
+        .bind_group => @intFromEnum(HandleType.bind_group),
+        .pipeline_layout => @intFromEnum(HandleType.pipeline_layout),
+        .compute_pipeline => @intFromEnum(HandleType.compute_pipeline),
+        .render_pipeline => @intFromEnum(HandleType.render_pipeline),
+        .command_encoder => @intFromEnum(HandleType.command_encoder),
+        .command_buffer => @intFromEnum(HandleType.command_buffer),
+        .render_pass_encoder => @intFromEnum(HandleType.render_pass_encoder),
+        .compute_pass_encoder => @intFromEnum(HandleType.compute_pass_encoder),
+        .query_set => @intFromEnum(HandleType.query_set),
     };
     env_wgpu_release_handle_js(type_id_for_js, handle);
 }
@@ -611,10 +640,12 @@ pub fn deviceCreateBindGroup(device_handle: Device, descriptor: *const BindGroup
 }
 
 // New FFI Structs for BindGroup
+pub const WHOLE_SIZE: u64 = 0xffffffffffffffff;
+
 pub const BufferBinding = extern struct {
     buffer: Buffer,
     offset: u64 = 0,
-    size: u64 = undefined, // WGPU.BIND_BUFFER_WHOLE_SIZE - JS will handle 'undefined' if passed as a specific large u64 value or similar sentinel.
+    size: u64 = WHOLE_SIZE, // WGPU.BIND_BUFFER_WHOLE_SIZE - JS will handle 'undefined' if passed as a specific large u64 value or similar sentinel.
 };
 
 pub const SamplerBinding = extern struct { // Placeholder - Sampler FFI not yet defined
@@ -641,4 +672,13 @@ pub const BindGroupDescriptor = extern struct {
     layout: BindGroupLayout,
     entries: [*]const BindGroupEntry,
     entries_len: usize,
+};
+
+pub const TextureSampleType = enum(u32) { // Corresponds to GPUTextureSampleType
+    float = 0,
+    unfilterable_float = 1,
+    depth = 2,
+    sint = 3,
+    uint = 4,
+    // JS strings: "float", "unfilterable-float", "depth", "sint", "uint"
 };
