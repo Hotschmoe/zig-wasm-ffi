@@ -174,12 +174,12 @@ This section tracks the completion status of the items outlined above.
     2.  **Define Descriptor Structs (`src/webgpu.zig`):** **DONE** (Includes `BufferDescriptor`, `ShaderModuleDescriptor`, `TextureDescriptor`, `TextureViewDescriptor`, `BindGroupLayoutEntry`, `BindGroupLayoutDescriptor`, `BindGroupEntry`, `BindGroupDescriptor`).
     3.  **Implement JS FFI Functions (`src/js/webgpu.js`):**
         *   Initialization (Adapter, Device, Queue): **DONE**
-        *   Resource Creation (`createBuffer`, `createShaderModule`, `createTexture`, `textureCreateView`): **DONE**. `createSampler`: *PENDING*.
+        *   Resource Creation (`createBuffer`, `createShaderModule`, `createTexture`, `textureCreateView`): **DONE**. `createSampler`: **DONE**.
         *   Pipeline Creation (`createBindGroupLayout`, `createPipelineLayout`, `createComputePipeline`): **DONE**. `createRenderPipeline`: **DONE**.
         *   Bind Group Creation (`createBindGroup`): **DONE**.
-        *   Command Encoding: `createCommandEncoder`, `beginComputePass`, `computePassEncoder.setPipeline`, `computePassEncoder.setBindGroup`, `computePassEncoder.dispatchWorkgroups`, `computePassEncoder.dispatchWorkgroupsIndirect`, `computePassEncoder.endPass`: **DONE**. `beginRenderPass` and its methods: *PENDING*.
-        *   Command Buffer (`commandEncoder.finish()`): *PENDING*.
-        *   Queue Operations (`queueWriteBuffer`): **DONE**. `queueSubmit`, `queueWriteTexture`, `queueCopyExternalImageToTexture`, `queueOnSubmittedWorkDone`: *PENDING*.
+        *   Command Encoding: `createCommandEncoder`, `beginComputePass`, `computePassEncoder.setPipeline`, `computePassEncoder.setBindGroup`, `computePassEncoder.dispatchWorkgroups`, `computePassEncoder.dispatchWorkgroupsIndirect`, `computePassEncoder.endPass`: **DONE**. `beginRenderPass` and its methods (`setPipeline`, `setBindGroup`, `draw`, `drawIndexed`, etc.), `renderPassEncoder.endPass`: **DONE**.
+        *   Command Buffer (`commandEncoder.finish()`): **DONE**.
+        *   Queue Operations (`queueWriteBuffer`): **DONE**. `queueSubmit`: **DONE**. `queueOnSubmittedWorkDone`: **DONE**. `queueWriteTexture`, `queueCopyExternalImageToTexture`: *PENDING*.
         *   Handle Management (`releaseHandle`): **DONE** (updated for new handle types).
         *   Error Handling (`getAndLogWebGPUError` mechanism): **DONE**. (JS side `readBindGroupLayoutDescriptorFromMemory` also updated).
     4.  **Implement Zig Externs and Wrappers (`src/webgpu.zig`):** **DONE** for implemented JS functions (including command encoder and compute pass). Zig FFI wrappers include logging and error handling.
@@ -208,3 +208,51 @@ This section tracks the completion status of the items outlined above.
 
 **Phase 3: Refactor into Reusable WebGPU Engine Components**
 *   *PENDING* (To be addressed after the particle simulator demo is functional).
+
+## Future TODOs / Pending Items
+
+This section lists features and tasks that are pending for the WebGPU FFI and the particle simulator demo.
+
+**High Priority for Particle Simulator Parity:**
+
+1.  **Implement FFI for `queueCopyExternalImageToTexture`:**
+    *   Needed for loading the blue noise texture in `particle_sim.html`.
+    *   Requires deciding on how `ImageBitmap` (or other sources) are handled across the Wasm boundary:
+        *   Option A: JS loads/creates `ImageBitmap`, stores it, gives Zig a handle. FFI uses this handle.
+        *   Option B: Zig provides raw pixel data, JS creates `ImageBitmap` (less efficient, more complex data transfer).
+        *   Option C: A new JS helper function exposed to Zig, e.g., `js_load_image_to_bitmap_handle(url_ptr, url_len)` that returns a handle asynchronously.
+2.  **Complete `demos/particle_simulator/src/webgpu_engine/renderer.zig`:**
+    *   Integrate all necessary FFI calls for resource creation, pipeline setup, and command encoding based on `particle_sim.html` logic.
+    *   Implement blue noise texture loading using the (to-be-implemented) `queueCopyExternalImageToTexture` FFI.
+    *   Manage ping-pong buffers and all GPU resources.
+
+**Other Core FFI Pending Items:**
+
+*   **Implement FFI for `queueWriteTexture`:**
+    *   Standard WebGPU function for writing data from a buffer to a texture.
+*   **Complete `SamplerBindingLayout` and `StorageTextureBindingLayout` in `BindGroupLayoutEntry` (`webgpu.zig`):**
+    *   Currently placeholders; needed for more advanced bind group layouts.
+*   **Complete `RenderPassDepthStencilAttachment` fields in `webgpu.zig`:**
+    *   Currently simplified; a full FFI should support all depth/stencil options.
+
+**Particle Simulator Demo Implementation (Phase 2 Completion):**
+
+*   **Implement `demos/particle_simulator/src/simulation.zig`:**
+    *   Manage particle data, simulation parameters, and potentially CPU-side logic if any part of the simulation isn't on the GPU.
+*   **Implement `demos/particle_simulator/src/main.zig`:**
+    *   Initialize `webgpu_handler` and `renderer`.
+    *   Implement the main application loop and exported functions for JS interaction.
+*   **Update HTML/JS Frontend (`demos/particle_simulator/web/`):**
+    *   Full UI controls (sliders, buttons) from `particle_sim.html`, forwarding updates to Zig.
+    *   Canvas setup and robust resizing.
+
+**Long-Term (Phase 3 and Beyond):**
+
+*   **Refactor into Reusable WebGPU Engine Components:**
+    *   Abstract common patterns from `renderer.zig` and `webgpu_handler.zig`.
+*   **Thorough Testing and Debugging:**
+    *   Test the particle simulator demo extensively.
+    *   Identify and fix any bugs or issues in the FFI and demo code.
+*   **Documentation and Examples:**
+    *   Improve documentation for the FFI.
+    *   Potentially create more examples using the FFI.

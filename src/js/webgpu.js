@@ -27,6 +27,8 @@ const globalWebGPU = {
     // Callback functions from Zig
     zig_receive_adapter: null,
     zig_receive_device: null,
+    commandBuffers: [null], // Added for GPUCommandBuffer handles
+    samplers: [null], // Added for GPUSampler handles
 };
 
 // Function to be called by main.js after Wasm instantiation
@@ -130,6 +132,27 @@ function storeComputePassEncoder(pass) {
     if (!pass) return 0;
     const handle = globalWebGPU.computePassEncoders.length;
     globalWebGPU.computePassEncoders.push(pass);
+    return handle;
+}
+
+function storeRenderPassEncoder(pass) {
+    if (!pass) return 0;
+    const handle = globalWebGPU.renderPassEncoders.length;
+    globalWebGPU.renderPassEncoders.push(pass);
+    return handle;
+}
+
+function storeCommandBuffer(buffer) {
+    if (!buffer) return 0;
+    const handle = globalWebGPU.commandBuffers.length;
+    globalWebGPU.commandBuffers.push(buffer);
+    return handle;
+}
+
+function storeSampler(sampler) {
+    if (!sampler) return 0;
+    const handle = globalWebGPU.samplers.length;
+    globalWebGPU.samplers.push(sampler);
     return handle;
 }
 
@@ -302,6 +325,7 @@ export const webGPUNativeImports = {
             case 6: if (handle > 0 && handle < globalWebGPU.shaderModules.length) globalWebGPU.shaderModules[handle] = null; break;
             case 7: if (handle > 0 && handle < globalWebGPU.textures.length) globalWebGPU.textures[handle] = null; break;
             case 8: if (handle > 0 && handle < globalWebGPU.textureViews.length) globalWebGPU.textureViews[handle] = null; break;
+            case 9: if (handle > 0 && handle < globalWebGPU.samplers.length) globalWebGPU.samplers[handle] = null; break; // Added for Sampler
             case 10: if (handle > 0 && handle < globalWebGPU.bindGroupLayouts.length) globalWebGPU.bindGroupLayouts[handle] = null; break;
             case 11: if (handle > 0 && handle < globalWebGPU.bindGroups.length) globalWebGPU.bindGroups[handle] = null; break;
             case 12: if (handle > 0 && handle < globalWebGPU.pipelineLayouts.length) globalWebGPU.pipelineLayouts[handle] = null; break;
@@ -309,6 +333,8 @@ export const webGPUNativeImports = {
             case 14: if (handle > 0 && handle < globalWebGPU.renderPipelines.length) globalWebGPU.renderPipelines[handle] = null; break;
             case 15: if (handle > 0 && handle < globalWebGPU.commandEncoders.length) globalWebGPU.commandEncoders[handle] = null; break;
             case 17: if (handle > 0 && handle < globalWebGPU.computePassEncoders.length) globalWebGPU.computePassEncoders[handle] = null; break;
+            case 18: if (handle > 0 && handle < globalWebGPU.renderPassEncoders.length) globalWebGPU.renderPassEncoders[handle] = null; break; // Added for RenderPassEncoder
+            case 16: if (handle > 0 && handle < globalWebGPU.commandBuffers.length) globalWebGPU.commandBuffers[handle] = null; break; // Added for CommandBuffer (typeId 16 is from webgpu.zig)
             default: console.warn(`[webgpu.js] Unknown type_id for release_handle: ${type_id}`);
         }
     },
@@ -1168,6 +1194,444 @@ export const webGPUNativeImports = {
 
     // Render Pass will go here
 
+    env_wgpu_command_encoder_begin_render_pass_js: function(encoder_handle, descriptor_ptr) {
+        try {
+            const encoder = globalWebGPU.commandEncoders[encoder_handle];
+            if (!encoder) return recordError(`CommandEncoder not found: ${encoder_handle}`);
+            if (!descriptor_ptr) return recordError("RenderPassDescriptor pointer is null");
+
+            const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
+            const wasmMemoryF64 = new Float64Array(globalWebGPU.wasmMemory.buffer);
+            let offset_u32 = descriptor_ptr / 4;
+
+            const jsDescriptor = {};
+            const label_ptr = wasmMemoryU32[offset_u32++];
+            if (label_ptr) jsDescriptor.label = readStringFromMemory(label_ptr);
+
+            const color_attachments_ptr = wasmMemoryU32[offset_u32++];
+            const color_attachments_len = wasmMemoryU32[offset_u32++];
+            jsDescriptor.colorAttachments = [];
+
+            const ZIG_LOAD_OP_TO_JS = { 0: "load", 1: "clear" };
+            const ZIG_STORE_OP_TO_JS = { 0: "store", 1: "discard" };
+
+            let ca_offset_bytes = color_attachments_ptr;
+            for (let i = 0; i < color_attachments_len; i++) {
+                const jsAttachment = {};
+                let ca_current_offset_u32 = ca_offset_bytes / 4;
+                
+                const view_handle = wasmMemoryU32[ca_current_offset_u32++];
+                jsAttachment.view = globalWebGPU.textureViews[view_handle];
+                if (!jsAttachment.view) return recordError(`TextureView not found for colorAttachment ${i}: handle ${view_handle}`);
+
+                const resolve_target_handle = wasmMemoryU32[ca_current_offset_u32++];
+                if (resolve_target_handle) {
+                    jsAttachment.resolveTarget = globalWebGPU.textureViews[resolve_target_handle];
+                    if (!jsAttachment.resolveTarget) return recordError(`Resolve Target TextureView not found for colorAttachment ${i}: handle ${resolve_target_handle}`);
+                }
+
+                const clear_value_ptr = wasmMemoryU32[ca_current_offset_u32++];
+                if (clear_value_ptr) {
+                    let cv_offset_f64 = clear_value_ptr / 8; // Color struct is 4 * f64
+                    jsAttachment.clearValue = {
+                        r: wasmMemoryF64[cv_offset_f64++],
+                        g: wasmMemoryF64[cv_offset_f64++],
+                        b: wasmMemoryF64[cv_offset_f64++],
+                        a: wasmMemoryF64[cv_offset_f64++],
+                    };
+                }
+                
+                jsAttachment.loadOp = ZIG_LOAD_OP_TO_JS[wasmMemoryU32[ca_current_offset_u32++]];
+                jsAttachment.storeOp = ZIG_STORE_OP_TO_JS[wasmMemoryU32[ca_current_offset_u32++]];
+                
+                jsDescriptor.colorAttachments.push(jsAttachment);
+                ca_offset_bytes += (5 * 4); // Size of RenderPassColorAttachment in u32 words (view, resolve_target, clear_value_ptr, load_op, store_op)
+            }
+
+            const depth_stencil_attachment_ptr = wasmMemoryU32[offset_u32++];
+            if (depth_stencil_attachment_ptr) {
+                // Basic reading, assuming only view for now as per particle_sim.html
+                const ds_view_handle = wasmMemoryU32[depth_stencil_attachment_ptr / 4];
+                const ds_view = globalWebGPU.textureViews[ds_view_handle];
+                if (!ds_view) return recordError(`TextureView for depthStencilAttachment not found: handle ${ds_view_handle}`);
+                jsDescriptor.depthStencilAttachment = { view: ds_view }; 
+                // Full parsing of RenderPassDepthStencilAttachment would go here if used
+            }
+
+            const occlusion_query_set_handle = wasmMemoryU32[offset_u32++];
+            if (occlusion_query_set_handle) {
+                jsDescriptor.occlusionQuerySet = globalWebGPU.querySets[occlusion_query_set_handle];
+                 if (!jsDescriptor.occlusionQuerySet) return recordError(`OcclusionQuerySet not found: handle ${occlusion_query_set_handle}`);
+            }
+
+            const timestamp_writes_ptr = wasmMemoryU32[offset_u32++];
+            if (timestamp_writes_ptr) {
+                let tw_offset_u32 = timestamp_writes_ptr / 4;
+                const query_set_handle = wasmMemoryU32[tw_offset_u32++];
+                const beginning_index = wasmMemoryU32[tw_offset_u32++]; // Assuming 0xFFFFFFFF from Zig if null
+                const end_index = wasmMemoryU32[tw_offset_u32++];       // Assuming 0xFFFFFFFF from Zig if null
+
+                const querySet = globalWebGPU.querySets[query_set_handle];
+                if (!querySet) return recordError(`QuerySet for timestampWrites not found: ${query_set_handle}`);
+                jsDescriptor.timestampWrites = { querySet: querySet };
+                if (beginning_index !== 0xFFFFFFFF) jsDescriptor.timestampWrites.beginningOfPassWriteIndex = beginning_index;
+                if (end_index !== 0xFFFFFFFF) jsDescriptor.timestampWrites.endOfPassWriteIndex = end_index;
+            }
+            
+            const pass = encoder.beginRenderPass(jsDescriptor);
+            return storeRenderPassEncoder(pass);
+        } catch (e) {
+            return recordError(e.message);
+        }
+    },
+
+    env_wgpu_render_pass_encoder_set_pipeline_js: function(pass_handle, pipeline_handle) {
+        try {
+            const pass = globalWebGPU.renderPassEncoders[pass_handle];
+            if (!pass) return recordError(`RenderPassEncoder not found: ${pass_handle}`);
+            const pipeline = globalWebGPU.renderPipelines[pipeline_handle];
+            if (!pipeline) return recordError(`RenderPipeline not found: ${pipeline_handle}`);
+            pass.setPipeline(pipeline);
+        } catch (e) {
+            recordError(e.message);
+        }
+    },
+
+    env_wgpu_render_pass_encoder_set_bind_group_js: function(pass_handle, index, bind_group_handle, dynamic_offsets_data_ptr, dynamic_offsets_data_start, dynamic_offsets_data_length) {
+        try {
+            const pass = globalWebGPU.renderPassEncoders[pass_handle];
+            if (!pass) return recordError(`RenderPassEncoder not found: ${pass_handle}`);
+            const bindGroup = globalWebGPU.bindGroups[bind_group_handle];
+            if (!bindGroup) return recordError(`BindGroup not found: ${bind_group_handle}`);
+
+            if (dynamic_offsets_data_ptr && dynamic_offsets_data_length > 0) {
+                const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
+                const offsets = wasmMemoryU32.subarray(dynamic_offsets_data_ptr / 4, dynamic_offsets_data_ptr / 4 + dynamic_offsets_data_length);
+                pass.setBindGroup(index, bindGroup, offsets);
+            } else {
+                pass.setBindGroup(index, bindGroup);
+            }
+        } catch (e) {
+            recordError(e.message);
+        }
+    },
+
+    env_wgpu_render_pass_encoder_set_vertex_buffer_js: function(pass_handle, slot, buffer_handle, offset_low, offset_high, size_low, size_high) {
+        try {
+            const pass = globalWebGPU.renderPassEncoders[pass_handle];
+            if (!pass) return recordError(`RenderPassEncoder not found: ${pass_handle}`);
+            const buffer = buffer_handle ? globalWebGPU.buffers[buffer_handle] : null;
+            if (buffer_handle && !buffer) return recordError(`VertexBuffer not found: ${buffer_handle}`);
+            
+            const offset = combineToBigInt(offset_low, offset_high);
+            const size = combineToBigInt(size_low, size_high);
+
+            if (buffer) {
+                pass.setVertexBuffer(slot, buffer, Number(offset), Number(size)); // Pass size always
+            } else {
+                pass.setVertexBuffer(slot, null); // Unsetting buffer
+            }
+        } catch (e) {
+            recordError(e.message);
+        }
+    },
+
+    env_wgpu_render_pass_encoder_set_index_buffer_js: function(pass_handle, buffer_handle, index_format_enum, offset_low, offset_high, size_low, size_high) {
+        try {
+            const pass = globalWebGPU.renderPassEncoders[pass_handle];
+            if (!pass) return recordError(`RenderPassEncoder not found: ${pass_handle}`);
+            const buffer = globalWebGPU.buffers[buffer_handle];
+            if (!buffer) return recordError(`IndexBuffer not found: ${buffer_handle}`);
+
+            const ZIG_INDEX_FORMAT_TO_JS = { 0: "uint16", 1: "uint32" };
+            const indexFormat = ZIG_INDEX_FORMAT_TO_JS[index_format_enum];
+            if(!indexFormat) return recordError(`Invalid index format: ${index_format_enum}`);
+
+            const offset = combineToBigInt(offset_low, offset_high);
+            const size = combineToBigInt(size_low, size_high);
+
+            pass.setIndexBuffer(buffer, indexFormat, Number(offset), Number(size)); // Pass size always
+        } catch (e) {
+            recordError(e.message);
+        }
+    },
+
+    env_wgpu_render_pass_encoder_draw_js: function(pass_handle, vertex_count, instance_count, first_vertex, first_instance) {
+        try {
+            const pass = globalWebGPU.renderPassEncoders[pass_handle];
+            if (!pass) return recordError(`RenderPassEncoder not found: ${pass_handle}`);
+            pass.draw(vertex_count, instance_count, first_vertex, first_instance);
+        } catch (e) {
+            recordError(e.message);
+        }
+    },
+
+    env_wgpu_render_pass_encoder_draw_indexed_js: function(pass_handle, index_count, instance_count, first_index, base_vertex, first_instance) {
+        try {
+            const pass = globalWebGPU.renderPassEncoders[pass_handle];
+            if (!pass) return recordError(`RenderPassEncoder not found: ${pass_handle}`);
+            pass.drawIndexed(index_count, instance_count, first_index, base_vertex, first_instance);
+        } catch (e) {
+            recordError(e.message);
+        }
+    },
+
+    env_wgpu_render_pass_encoder_draw_indirect_js: function(pass_handle, indirect_buffer_handle, indirect_offset_low, indirect_offset_high) {
+        try {
+            const pass = globalWebGPU.renderPassEncoders[pass_handle];
+            if (!pass) return recordError(`RenderPassEncoder not found: ${pass_handle}`);
+            const indirectBuffer = globalWebGPU.buffers[indirect_buffer_handle];
+            if (!indirectBuffer) return recordError(`IndirectBuffer not found for drawIndirect: ${indirect_buffer_handle}`);
+            const indirectOffset = combineToBigInt(indirect_offset_low, indirect_offset_high);
+            pass.drawIndirect(indirectBuffer, Number(indirectOffset));
+        } catch (e) {
+            recordError(e.message);
+        }
+    },
+
+    env_wgpu_render_pass_encoder_draw_indexed_indirect_js: function(pass_handle, indirect_buffer_handle, indirect_offset_low, indirect_offset_high) {
+        try {
+            const pass = globalWebGPU.renderPassEncoders[pass_handle];
+            if (!pass) return recordError(`RenderPassEncoder not found: ${pass_handle}`);
+            const indirectBuffer = globalWebGPU.buffers[indirect_buffer_handle];
+            if (!indirectBuffer) return recordError(`IndirectBuffer not found for drawIndexedIndirect: ${indirect_buffer_handle}`);
+            const indirectOffset = combineToBigInt(indirect_offset_low, indirect_offset_high);
+            pass.drawIndexedIndirect(indirectBuffer, Number(indirectOffset));
+        } catch (e) {
+            recordError(e.message);
+        }
+    },
+
+    env_wgpu_render_pass_encoder_write_timestamp_js: function(pass_handle, query_set_handle, query_index) {
+        try {
+            const pass = globalWebGPU.renderPassEncoders[pass_handle];
+            if (!pass) return recordError(`RenderPassEncoder not found: ${pass_handle}`);
+            const querySet = globalWebGPU.querySets[query_set_handle];
+            if (!querySet) return recordError(`QuerySet not found for writeTimestamp: ${query_set_handle}`);
+            
+            if (typeof pass.writeTimestamp === 'function') {
+                pass.writeTimestamp(querySet, query_index);
+            } else {
+                console.warn("[webgpu.js] renderPassEncoder.writeTimestamp not available or not called due to descriptor usage.");
+            }
+        } catch (e) {
+            recordError(e.message);
+        }
+    },
+
+    env_wgpu_render_pass_encoder_end_js: function(pass_handle) {
+        try {
+            const pass = globalWebGPU.renderPassEncoders[pass_handle];
+            if (!pass) return recordError(`RenderPassEncoder not found: ${pass_handle}`);
+            pass.end();
+            if (pass_handle > 0 && pass_handle < globalWebGPU.renderPassEncoders.length) {
+                globalWebGPU.renderPassEncoders[pass_handle] = null;
+            }
+        } catch (e) {
+            recordError(e.message);
+        }
+    },
+
+    // Command Finishing and Submission will go here
+
+    env_wgpu_command_encoder_finish_js: function(encoder_handle, descriptor_ptr) {
+        try {
+            const encoder = globalWebGPU.commandEncoders[encoder_handle];
+            if (!encoder) return recordError(`CommandEncoder not found for finish: ${encoder_handle}`);
+
+            let jsDescriptor = undefined;
+            if (descriptor_ptr) {
+                const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
+                const label_ptr = wasmMemoryU32[descriptor_ptr / 4];
+                if (label_ptr) {
+                    jsDescriptor = { label: readStringFromMemory(label_ptr) };
+                }
+            }
+            const commandBuffer = encoder.finish(jsDescriptor);
+            if (encoder_handle > 0 && encoder_handle < globalWebGPU.commandEncoders.length) {
+                globalWebGPU.commandEncoders[encoder_handle] = null; // Encoder is consumed
+            }
+            return storeCommandBuffer(commandBuffer);
+        } catch (e) {
+            return recordError(e.message);
+        }
+    },
+
+    env_wgpu_queue_submit_js: function(queue_handle, command_buffers_ptr, command_buffers_len) {
+        try {
+            const queue = globalWebGPU.queues[queue_handle];
+            if (!queue) return recordError(`Queue not found for submit: ${queue_handle}`);
+            if (!command_buffers_ptr || command_buffers_len === 0) {
+                return; 
+            }
+
+            const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
+            const jsCommandBuffers = [];
+            let cb_ptr_offset = command_buffers_ptr / 4;
+            for (let i = 0; i < command_buffers_len; i++) {
+                const cb_handle = wasmMemoryU32[cb_ptr_offset++];
+                const commandBuffer = globalWebGPU.commandBuffers[cb_handle];
+                if (!commandBuffer) return recordError(`CommandBuffer not found in list for submit: handle ${cb_handle}`);
+                jsCommandBuffers.push(commandBuffer);
+                // CommandBuffers are consumed after submit, mark them as null in our store
+                // if (cb_handle > 0 && cb_handle < globalWebGPU.commandBuffers.length) { 
+                //     globalWebGPU.commandBuffers[cb_handle] = null;
+                // }
+            }
+            queue.submit(jsCommandBuffers);
+        } catch (e) {
+            recordError(e.message);
+        }
+    },
+
+    env_wgpu_queue_on_submitted_work_done_js: function(queue_handle) {
+        try {
+            const queue = globalWebGPU.queues[queue_handle];
+            if (!queue) {
+                // Cannot call recordError AND then the Zig callback easily without promise ID system.
+                // So, if queue is invalid, we try to call Zig callback with error status directly.
+                console.error(`[webgpu.js] Invalid queue handle for onSubmittedWorkDone: ${queue_handle}`);
+                if (globalWebGPU.wasmExports && globalWebGPU.wasmExports.zig_on_queue_work_done) {
+                    globalWebGPU.wasmExports.zig_on_queue_work_done(queue_handle, 0); // 0 for error status
+                } else {
+                    console.error("[webgpu.js] Wasm exports not ready for onSubmittedWorkDone error callback.");
+                }
+                return;
+            }
+
+            queue.onSubmittedWorkDone()
+                .then(() => {
+                    if (globalWebGPU.wasmExports && globalWebGPU.wasmExports.zig_on_queue_work_done) {
+                        globalWebGPU.wasmExports.zig_on_queue_work_done(queue_handle, 1); // 1 for success status
+                    } else {
+                        console.error("[webgpu.js] Wasm exports not ready for onSubmittedWorkDone success callback.");
+                    }
+                })
+                .catch(err => {
+                    recordError(`Error in onSubmittedWorkDone for queue ${queue_handle}: ${err.message}`);
+                    if (globalWebGPU.wasmExports && globalWebGPU.wasmExports.zig_on_queue_work_done) {
+                        globalWebGPU.wasmExports.zig_on_queue_work_done(queue_handle, 0); // 0 for error status
+                    } else {
+                        console.error("[webgpu.js] Wasm exports not ready for onSubmittedWorkDone failure callback.");
+                    }
+                });
+        } catch (e) {
+            // This catch is for immediate errors in setting up the promise, not for the promise resolution itself.
+            recordError(`Immediate error setting up onSubmittedWorkDone for queue ${queue_handle}: ${e.message}`);
+            if (globalWebGPU.wasmExports && globalWebGPU.wasmExports.zig_on_queue_work_done) {
+                globalWebGPU.wasmExports.zig_on_queue_work_done(queue_handle, 0); // 0 for error status
+            } else {
+                console.error("[webgpu.js] Wasm exports not ready for onSubmittedWorkDone setup failure callback.");
+            }
+        }
+    },
+
+    env_wgpu_device_create_sampler_js: function(device_handle, descriptor_ptr) {
+        try {
+            const device = globalWebGPU.devices[device_handle];
+            if (!device) return recordError(`Device not found for createSampler: ${device_handle}`);
+
+            let jsDescriptor = {}; // Default sampler if descriptor_ptr is null
+
+            if (descriptor_ptr) {
+                const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
+                const wasmMemoryF32 = new Float32Array(globalWebGPU.wasmMemory.buffer);
+                const wasmMemoryU16 = new Uint16Array(globalWebGPU.wasmMemory.buffer);
+                let offset_u32 = descriptor_ptr / 4;
+
+                // SamplerDescriptor layout from webgpu.zig:
+                // label: ?[*:0]const u8 = null, (ptr, offset 0)
+                // address_mode_u: GPUAddressMode = .clamp_to_edge, (u32, offset 8 after label ptr)
+                // address_mode_v: GPUAddressMode = .clamp_to_edge, (u32, offset 12)
+                // address_mode_w: GPUAddressMode = .clamp_to_edge, (u32, offset 16)
+                // mag_filter: GPUFilterMode = .nearest, (u32, offset 20)
+                // min_filter: GPUFilterMode = .nearest, (u32, offset 24)
+                // mipmap_filter: GPUMipmapFilterMode = .nearest, (u32, offset 28)
+                // lod_min_clamp: f32 = 0.0, (f32, offset 32)
+                // lod_max_clamp: f32 = 32.0, (f32, offset 36)
+                // compare: ?GPUCompareFunction = null, (u32 for enum value + u8 for has_value, say offset 40 for value, 44 for has_value)
+                // max_anisotropy: u16 = 1 (u16, offset 48 assuming compare took 8 bytes with padding)
+
+                const label_ptr = wasmMemoryU32[offset_u32++]; // Reads label ptr (descriptor_ptr + 0)
+                // offset_u32 is now (descriptor_ptr/4) + 1. For next field (address_mode_u), which is at byte offset 8 from desc start (if label_ptr is 8 bytes)
+                // If label_ptr is 4 bytes, then addr_mode_u is at byte offset 4.
+                // Let's assume Zig pointer is 4 bytes for wasm32.
+                // label: ptr (4 bytes)
+                // address_mode_u (4 bytes)
+                // address_mode_v (4 bytes)
+                // address_mode_w (4 bytes)
+                // mag_filter (4 bytes)
+                // min_filter (4 bytes)
+                // mipmap_filter (4 bytes)
+                // lod_min_clamp (4 bytes)
+                // lod_max_clamp (4 bytes)
+                // compare_value (4 bytes) + compare_has_value (1 byte, padded to 4 for alignment? -> total 8 bytes for optional compare)
+                // max_anisotropy (2 bytes)
+
+                if (label_ptr) jsDescriptor.label = readStringFromMemory(label_ptr);
+
+                jsDescriptor.addressModeU = ZIG_ADDRESS_MODE_TO_JS[wasmMemoryU32[offset_u32++]];
+                jsDescriptor.addressModeV = ZIG_ADDRESS_MODE_TO_JS[wasmMemoryU32[offset_u32++]];
+                jsDescriptor.addressModeW = ZIG_ADDRESS_MODE_TO_JS[wasmMemoryU32[offset_u32++]];
+                jsDescriptor.magFilter = ZIG_FILTER_MODE_TO_JS[wasmMemoryU32[offset_u32++]];
+                jsDescriptor.minFilter = ZIG_FILTER_MODE_TO_JS[wasmMemoryU32[offset_u32++]];
+                jsDescriptor.mipmapFilter = ZIG_MIPMAP_FILTER_MODE_TO_JS[wasmMemoryU32[offset_u32++]];
+                jsDescriptor.lodMinClamp = wasmMemoryF32[offset_u32++]; 
+                jsDescriptor.lodMaxClamp = wasmMemoryF32[offset_u32++];
+                
+                const compare_val = wasmMemoryU32[offset_u32++];
+                // Assuming Zig passes compare: ?GPUCompareFunction as two fields in extern struct if not using a more complex optional representation:
+                // compare_value: u32, compare_is_present: bool (u8/u32)
+                // For Zig `?EnumType = null`, if it's a direct field, it needs a presence indicator.
+                // Let's assume Zig wrapper ensures `compare_val` is a special value (e.g. MAX_U32) if null,
+                // or descriptor_ptr itself implies if it's a default or full descriptor.
+                // The current SamplerDescriptor in Zig has `compare: ?GPUCompareFunction = null`.
+                // If Zig just passes the value of the enum (or 0/sentinel for null), need to check that sentinel carefully.
+                // The ZIG_COMPARE_FUNCTION_TO_JS handles a default if value not found.
+                // If we assume Zig passes 0 if the optional compare function is not set (and 0 is not a valid compare func for this map)
+                // This mapping needs to be robust to `undefined` if 0 is passed for null.
+                // The `ZIG_COMPARE_FUNCTION_TO_JS` mapping does not have 0 as a valid input for 'never' (it starts 'never' at 0).
+                // This is fine. If Zig sends 0 for no-compare, and our map for 0 is 'never', WebGPU will error if 'never' is used on non-comparison sampler.
+                // WebGPU API: `compare` is only valid for comparison samplers.
+                // So, if Zig `compare` field is null, we should NOT set `jsDescriptor.compare`.
+                // A robust way is for Zig to pass a boolean flag for optional fields in extern structs.
+                // For now, assuming if `compare_val` maps to something via `ZIG_COMPARE_FUNCTION_TO_JS` it's used.
+                // This will require care on Zig side. A better way: Zig sends specific sentinel for null, or a has_value byte.
+                // Let's assume Zig struct will have `compare_value: u32` and `compare_has_value: bool` (u8 then padded)
+                // So, after compare_val: `const compare_is_present = wasmMemoryU32[offset_u32++] !== 0;` (if bool is u32)
+                // If using the `compare: ?GPUCompareFunction = null` approach from Zig, need to verify how Zig compiler handles this for extern structs.
+                // Assuming for now that if compare is null in Zig, it won't be included or will be a sentinel.
+                // The current Zig struct has compare: ?GPUCompareFunction = null. This means it will have a has_value byte.
+                // The value itself is at offset_u32. The has_value is at (descriptor_ptr + current_byte_offset_of_has_value_field)
+                // Let's adjust reading to be more explicit about struct layout for optional enum. Field order: lodMaxClamp (f32), compare_value (u32), compare_has_value (u8), max_anisotropy (u16).
+                // Offset of compare_value from start of descriptor: label(4) + 6*u32_enums(24) + 2*f32_lods(8) = 36 bytes. So offset_u32 points to compare_val.
+                const compare_is_present_offset_bytes = descriptor_ptr + 36 + 4; // After compare_val (u32)
+                const compare_is_present = new Uint8Array(globalWebGPU.wasmMemory.buffer, compare_is_present_offset_bytes, 1)[0] !== 0;
+                if (compare_is_present) {
+                    jsDescriptor.compare = ZIG_COMPARE_FUNCTION_TO_JS[compare_val];
+                }
+                // offset_u32 was already advanced past compare_val. Now advance past compare_is_present (assuming it was padded to 4 bytes for alignment)
+                offset_u32++; // Assuming compare_value (u32) and compare_is_present (u32 due to padding)
+                
+                // max_anisotropy is u16. It would be at byte_offset = descriptor_ptr + 36(label+enums) + 8(lods) + 8(compare_opt) = 52
+                jsDescriptor.maxAnisotropy = wasmMemoryU16[ (descriptor_ptr / 2) + (52 / 2) ]; // Careful with u16 indexing from base u32 offset_ptr
+                                                                                                // Simpler: use byte offset for DataView
+                const max_anisotropy_offset_bytes = descriptor_ptr + 36 + 8 + 8; // Label(4)+Enums(24)+LODs(8)+CompareOpt(8 for val+flag+pad) = 52
+                jsDescriptor.maxAnisotropy = new DataView(globalWebGPU.wasmMemory.buffer).getUint16(max_anisotropy_offset_bytes, true);
+
+            } else { // No descriptor_ptr, use WebGPU defaults (which are mostly what our Zig defaults are)
+                // JS default for createSampler({}) is fine.
+            }
+
+            const sampler = device.createSampler(jsDescriptor);
+            return storeSampler(sampler);
+        } catch (e) {
+            return recordError(e.message);
+        }
+    },
+
+    // Other queue functions ...
+
 };
 
 // --- Helper Mappings for Enum Zig -> JS ---
@@ -1300,6 +1764,21 @@ const ZIG_BLEND_FACTOR_TO_JS = {
     10: "src-alpha-saturated", 11: "constant", 12: "one-minus-constant",
 };
 
+const ZIG_ADDRESS_MODE_TO_JS = {
+    0: "clamp-to-edge",
+    1: "repeat",
+    2: "mirror-repeat"
+};
+
+const ZIG_FILTER_MODE_TO_JS = {
+    0: "nearest",
+    1: "linear"
+};
+
+const ZIG_MIPMAP_FILTER_MODE_TO_JS = {
+    0: "nearest",
+    1: "linear"
+};
 
 // It's important that wasmInstance is set on webGPUNativeImports after Wasm instantiation.
 // Example: webGPUNativeImports.wasmInstance = instance;

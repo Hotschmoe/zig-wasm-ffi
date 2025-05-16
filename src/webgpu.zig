@@ -1067,3 +1067,288 @@ pub fn computePassEncoderEnd(pass_handle: ComputePassEncoder) void {
     // Or we can call releaseHandle here explicitly if JS doesn't auto-release on end.
     // WebGPU spec implies pass encoder is consumed by end(). JS side should nullify its stored handle.
 }
+
+// Render Pass
+pub const GPULoadOp = enum(u32) {
+    load = 0,
+    clear = 1,
+};
+
+pub const GPUStoreOp = enum(u32) {
+    store = 0,
+    discard = 1,
+};
+
+pub const Color = extern struct { // Corresponds to GPUColor { r: f64, g: f64, b: f64, a: f64 }
+    r: f64,
+    g: f64,
+    b: f64,
+    a: f64,
+};
+
+pub const RenderPassColorAttachment = extern struct { // Corresponds to GPURenderPassColorAttachment
+    view: TextureView,
+    resolve_target: ?TextureView = null,
+    clear_value: ?*const Color = null,
+    load_op: GPULoadOp,
+    store_op: GPUStoreOp,
+};
+
+pub const RenderPassDepthStencilAttachment = extern struct { // Corresponds to GPURenderPassDepthStencilAttachment
+    view: TextureView,
+    // Fields for depth/stencil clear values, load/store ops, read-only flags would go here.
+    // Simplified for now as particle_sim.html doesn't use them directly in its RenderPassDescriptor.
+    // For a full FFI, these would be:
+    // depth_clear_value: ?f32 = null,
+    // depth_load_op: ?GPULoadOp = null,
+    // depth_store_op: ?GPUStoreOp = null,
+    // depth_read_only: bool = false, // Consider how bools are passed (u8 or u32)
+    // stencil_clear_value: ?u32 = null,
+    // stencil_load_op: ?GPULoadOp = null,
+    // stencil_store_op: ?GPUStoreOp = null,
+    // stencil_read_only: bool = false,
+};
+
+pub const RenderPassTimestampWrites = extern struct { // Corresponds to GPURenderPassTimestampWrites
+    query_set: QuerySet,
+    beginning_of_pass_write_index: ?u32 = null,
+    end_of_pass_write_index: ?u32 = null,
+};
+
+pub const RenderPassDescriptor = extern struct {
+    label: ?[*:0]const u8 = null,
+    color_attachments: [*]const RenderPassColorAttachment,
+    color_attachments_len: usize,
+    depth_stencil_attachment: ?*const RenderPassDepthStencilAttachment = null,
+    occlusion_query_set: ?QuerySet = null,
+    timestamp_writes: ?*const RenderPassTimestampWrites = null,
+};
+
+pub extern "env" fn env_wgpu_command_encoder_begin_render_pass_js(encoder_handle: CommandEncoder, descriptor_ptr: *const RenderPassDescriptor) callconv(.C) RenderPassEncoder;
+pub extern "env" fn env_wgpu_render_pass_encoder_set_pipeline_js(pass_handle: RenderPassEncoder, pipeline_handle: RenderPipeline) void;
+pub extern "env" fn env_wgpu_render_pass_encoder_set_bind_group_js(pass_handle: RenderPassEncoder, index: u32, bind_group_handle: BindGroup, dynamic_offsets_data_ptr: ?[*]const u32, dynamic_offsets_data_start: usize, dynamic_offsets_data_length: usize) void;
+pub extern "env" fn env_wgpu_render_pass_encoder_set_vertex_buffer_js(pass_handle: RenderPassEncoder, slot: u32, buffer_handle: ?Buffer, offset: u64, size: u64) void;
+pub extern "env" fn env_wgpu_render_pass_encoder_set_index_buffer_js(pass_handle: RenderPassEncoder, buffer_handle: Buffer, index_format: GPUIndexFormat, offset: u64, size: u64) void;
+pub extern "env" fn env_wgpu_render_pass_encoder_draw_js(pass_handle: RenderPassEncoder, vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32) void;
+pub extern "env" fn env_wgpu_render_pass_encoder_draw_indexed_js(pass_handle: RenderPassEncoder, index_count: u32, instance_count: u32, first_index: u32, base_vertex: i32, first_instance: u32) void;
+pub extern "env" fn env_wgpu_render_pass_encoder_draw_indirect_js(pass_handle: RenderPassEncoder, indirect_buffer_handle: Buffer, indirect_offset: u64) void;
+pub extern "env" fn env_wgpu_render_pass_encoder_draw_indexed_indirect_js(pass_handle: RenderPassEncoder, indirect_buffer_handle: Buffer, indirect_offset: u64) void;
+pub extern "env" fn env_wgpu_render_pass_encoder_write_timestamp_js(pass_handle: RenderPassEncoder, query_set_handle: QuerySet, query_index: u32) void;
+pub extern "env" fn env_wgpu_render_pass_encoder_end_js(pass_handle: RenderPassEncoder) void;
+
+pub fn commandEncoderBeginRenderPass(encoder_handle: CommandEncoder, descriptor: *const RenderPassDescriptor) !RenderPassEncoder {
+    webutils.log("CommandEncoder: Beginning Render Pass (Zig FFI wrapper)...");
+    if (encoder_handle == 0) {
+        webutils.log("E00: Invalid command encoder handle (0) passed to commandEncoderBeginRenderPass.");
+        return error.InvalidHandle;
+    }
+    if (descriptor.color_attachments_len > 0 and descriptor.color_attachments == null) {
+        webutils.log("E00: Invalid RenderPassDescriptor (null color_attachments with non-zero length).");
+        return error.InvalidDescriptor;
+    }
+    const pass_handle = env_wgpu_command_encoder_begin_render_pass_js(encoder_handle, descriptor);
+    if (pass_handle == 0) {
+        getAndLogWebGPUError("E22: Failed to begin render pass (JS pass_handle is 0).");
+        return error.OperationFailed;
+    }
+    webutils.log("RenderPassEncoder created.");
+    return pass_handle;
+}
+
+pub fn renderPassEncoderSetPipeline(pass_handle: RenderPassEncoder, pipeline_handle: RenderPipeline) void {
+    webutils.log("RenderPassEncoder: SetPipeline...");
+    if (pass_handle == 0 or pipeline_handle == 0) {
+        webutils.log("E00: Invalid handle (0) for render pass or pipeline in setPipeline.");
+        return;
+    }
+    env_wgpu_render_pass_encoder_set_pipeline_js(pass_handle, pipeline_handle);
+}
+
+pub fn renderPassEncoderSetBindGroup(pass_handle: RenderPassEncoder, index: u32, bind_group_handle: BindGroup, dynamic_offsets: ?[]const u32) void {
+    webutils.log("RenderPassEncoder: SetBindGroup...");
+    if (pass_handle == 0 or bind_group_handle == 0) {
+        webutils.log("E00: Invalid handle (0) for render pass or bind group in setBindGroup.");
+        return;
+    }
+    var data_ptr: ?[*]const u32 = null;
+    const data_start: usize = 0;
+    var data_length: usize = 0;
+    if (dynamic_offsets) |offsets| {
+        if (offsets.len > 0) {
+            data_ptr = offsets.ptr;
+            data_length = offsets.len;
+        }
+    }
+    env_wgpu_render_pass_encoder_set_bind_group_js(pass_handle, index, bind_group_handle, data_ptr, data_start, data_length);
+}
+
+pub fn renderPassEncoderSetVertexBuffer(pass_handle: RenderPassEncoder, slot: u32, buffer_handle: ?Buffer, offset: u64, size: u64) void {
+    webutils.log("RenderPassEncoder: SetVertexBuffer...");
+    if (pass_handle == 0) {
+        webutils.log("E00: Invalid render pass handle (0) in setVertexBuffer.");
+        return;
+    }
+    env_wgpu_render_pass_encoder_set_vertex_buffer_js(pass_handle, slot, buffer_handle, offset, size);
+}
+
+pub fn renderPassEncoderSetIndexBuffer(pass_handle: RenderPassEncoder, buffer_handle: Buffer, index_format: GPUIndexFormat, offset: u64, size: u64) void {
+    webutils.log("RenderPassEncoder: SetIndexBuffer...");
+    if (pass_handle == 0 or buffer_handle == 0) {
+        webutils.log("E00: Invalid handle (0) for render pass or buffer in setIndexBuffer.");
+        return;
+    }
+    env_wgpu_render_pass_encoder_set_index_buffer_js(pass_handle, buffer_handle, index_format, offset, size);
+}
+
+pub fn renderPassEncoderDraw(pass_handle: RenderPassEncoder, vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32) void {
+    webutils.log("RenderPassEncoder: Draw...");
+    if (pass_handle == 0) {
+        webutils.log("E00: Invalid render pass handle (0) in draw.");
+        return;
+    }
+    env_wgpu_render_pass_encoder_draw_js(pass_handle, vertex_count, instance_count, first_vertex, first_instance);
+}
+
+pub fn renderPassEncoderDrawIndexed(pass_handle: RenderPassEncoder, index_count: u32, instance_count: u32, first_index: u32, base_vertex: i32, first_instance: u32) void {
+    webutils.log("RenderPassEncoder: DrawIndexed...");
+    if (pass_handle == 0) {
+        webutils.log("E00: Invalid render pass handle (0) in drawIndexed.");
+        return;
+    }
+    env_wgpu_render_pass_encoder_draw_indexed_js(pass_handle, index_count, instance_count, first_index, base_vertex, first_instance);
+}
+
+pub fn renderPassEncoderDrawIndirect(pass_handle: RenderPassEncoder, indirect_buffer: Buffer, indirect_offset: u64) void {
+    webutils.log("RenderPassEncoder: DrawIndirect...");
+    if (pass_handle == 0 or indirect_buffer == 0) {
+        webutils.log("E00: Invalid handle (0) for pass or indirect_buffer in drawIndirect.");
+        return;
+    }
+    env_wgpu_render_pass_encoder_draw_indirect_js(pass_handle, indirect_buffer, indirect_offset);
+}
+
+pub fn renderPassEncoderDrawIndexedIndirect(pass_handle: RenderPassEncoder, indirect_buffer: Buffer, indirect_offset: u64) void {
+    webutils.log("RenderPassEncoder: DrawIndexedIndirect...");
+    if (pass_handle == 0 or indirect_buffer == 0) {
+        webutils.log("E00: Invalid handle (0) for pass or indirect_buffer in drawIndexedIndirect.");
+        return;
+    }
+    env_wgpu_render_pass_encoder_draw_indexed_indirect_js(pass_handle, indirect_buffer, indirect_offset);
+}
+
+pub fn renderPassEncoderWriteTimestamp(pass_handle: RenderPassEncoder, query_set: QuerySet, query_index: u32) void {
+    webutils.log("RenderPassEncoder: WriteTimestamp...");
+    if (pass_handle == 0 or query_set == 0) {
+        webutils.log("E00: Invalid handle (0) for pass or query_set in writeTimestamp.");
+        return;
+    }
+    env_wgpu_render_pass_encoder_write_timestamp_js(pass_handle, query_set, query_index);
+}
+
+pub fn renderPassEncoderEnd(pass_handle: RenderPassEncoder) void {
+    webutils.log("RenderPassEncoder: EndPass...");
+    if (pass_handle == 0) {
+        webutils.log("E00: Invalid render pass handle (0) in endPass.");
+        return;
+    }
+    env_wgpu_render_pass_encoder_end_js(pass_handle);
+}
+
+// Command Buffer
+pub const CommandBufferDescriptor = extern struct {
+    label: ?[*:0]const u8 = null,
+};
+
+// Command Finishing & Queue Submission FFI
+pub extern "env" fn env_wgpu_command_encoder_finish_js(encoder_handle: CommandEncoder, descriptor_ptr: ?*const CommandBufferDescriptor) callconv(.C) CommandBuffer;
+pub extern "env" fn env_wgpu_queue_submit_js(queue_handle: Queue, command_buffers_ptr: [*]const CommandBuffer, command_buffers_len: usize) void;
+pub extern "env" fn env_wgpu_queue_on_submitted_work_done_js(queue_handle: Queue) void; // New
+
+pub fn commandEncoderFinish(encoder_handle: CommandEncoder, descriptor: ?*const CommandBufferDescriptor) !CommandBuffer {
+    webutils.log("CommandEncoder: Finish (Zig FFI wrapper)...");
+    if (encoder_handle == 0) {
+        webutils.log("E00: Invalid command encoder handle (0) passed to commandEncoderFinish.");
+        return error.InvalidHandle;
+    }
+    const cb_handle = env_wgpu_command_encoder_finish_js(encoder_handle, descriptor);
+    if (cb_handle == 0) {
+        getAndLogWebGPUError("E23: Failed to finish command encoder (JS cb_handle is 0)."); // New Error Code E23
+        return error.OperationFailed;
+    }
+    webutils.log("CommandBuffer created (from finish).");
+    // JS side should release the command encoder handle as it's consumed by finish()
+    return cb_handle;
+}
+
+pub fn queueSubmit(queue_handle: Queue, command_buffers: []const CommandBuffer) void {
+    webutils.log("Queue: Submit (Zig FFI wrapper)...");
+    if (queue_handle == 0) {
+        webutils.log("E00: Invalid queue handle (0) passed to queueSubmit.");
+        return;
+    }
+    if (command_buffers.len == 0) {
+        webutils.log("W01: No command buffers passed to queueSubmit. Nothing to do.");
+        return;
+    }
+    for (command_buffers) |cb_handle| {
+        if (cb_handle == 0) {
+            webutils.log("E00: Invalid command buffer handle (0) in list passed to queueSubmit.");
+            return; // Or handle error more gracefully, e.g. skip invalid ones
+        }
+    }
+    env_wgpu_queue_submit_js(queue_handle, command_buffers.ptr, command_buffers.len);
+    // Submitted command buffers are consumed and should be released if not already by JS.
+    // For now, assume JS handles release of command buffers if they are single-use from JS perspective.
+}
+
+pub fn queueOnSubmittedWorkDone(queue_handle: Queue) void {
+    webutils.log("Queue: OnSubmittedWorkDone (Zig FFI wrapper). Will call Zig export 'zig_on_queue_work_done' upon completion...");
+    if (queue_handle == 0) {
+        webutils.log("E00: Invalid queue handle (0) passed to queueOnSubmittedWorkDone. Callback will not be invoked.");
+        // Optionally, could immediately call the Zig callback with an error status if desired.
+        // globalWebGPU.wasmExports.zig_on_queue_work_done(queue_handle, 0); // Example if JS side had direct access to wasmExports
+        return;
+    }
+    env_wgpu_queue_on_submitted_work_done_js(queue_handle);
+}
+
+// AFTER existing GPUCompareFunction enum
+pub const GPUAddressMode = enum(u32) { clamp_to_edge = 0, repeat = 1, mirror_repeat = 2 };
+pub const GPUFilterMode = enum(u32) { nearest = 0, linear = 1 };
+pub const GPUMipmapFilterMode = enum(u32) { nearest = 0, linear = 1 };
+
+// AFTER RenderPassDescriptor struct
+pub const SamplerDescriptor = extern struct {
+    label: ?[*:0]const u8 = null,
+    address_mode_u: GPUAddressMode = .clamp_to_edge,
+    address_mode_v: GPUAddressMode = .clamp_to_edge,
+    address_mode_w: GPUAddressMode = .clamp_to_edge,
+    mag_filter: GPUFilterMode = .nearest,
+    min_filter: GPUFilterMode = .nearest,
+    mipmap_filter: GPUMipmapFilterMode = .nearest,
+    lod_min_clamp: f32 = 0.0,
+    lod_max_clamp: f32 = 32.0,
+    compare: ?GPUCompareFunction = null, // Optional: only for comparison samplers
+    max_anisotropy: u16 = 1, // GPUSize16, typically 1 or higher if anisotropic filtering is used.
+};
+
+// AFTER existing FFI externs for queue operations
+// pub extern "env" fn env_wgpu_queue_on_submitted_work_done_js(queue_handle: Queue) void;
+pub extern "env" fn env_wgpu_device_create_sampler_js(device_handle: Device, descriptor_ptr: ?*const SamplerDescriptor) callconv(.C) Sampler;
+
+// AFTER deviceCreateRenderPipeline Zig wrapper function
+pub fn deviceCreateSampler(device_handle: Device, descriptor: ?*const SamplerDescriptor) !Sampler {
+    webutils.log("Creating WebGPU Sampler (Zig FFI wrapper)...");
+    if (device_handle == 0) {
+        webutils.log("E00: Invalid device handle (0) passed to deviceCreateSampler.");
+        return error.InvalidHandle;
+    }
+    // descriptor can be null for default sampler settings
+    const sampler_handle = env_wgpu_device_create_sampler_js(device_handle, descriptor);
+    if (sampler_handle == 0) {
+        getAndLogWebGPUError("E24: Failed to create sampler (JS sampler_handle is 0)."); // New Error Code E24
+        return error.OperationFailed;
+    }
+    webutils.log("Sampler created.");
+    return sampler_handle;
+}
