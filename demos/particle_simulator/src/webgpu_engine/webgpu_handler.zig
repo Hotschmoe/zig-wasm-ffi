@@ -60,17 +60,17 @@ pub const WebGPUHandler = struct {
     pub fn deinit(self: *WebGPUHandler) void {
         webutils.log("[WebGPUHandler] Deinitializing WebGPU (instance)..._fields_before_release: A(" ++ "TODO_INT_TO_STRING" ++ ") D(" ++ "TODO_INT_TO_STRING" ++ ") Q(" ++ "TODO_INT_TO_STRING" ++ ")"); // TODO: Format numbers
         if (self.queue != 0) {
-            webgpu.releaseHandle(.Queue, self.queue); // Corrected HandleType casing
+            webgpu.releaseHandle(.queue, self.queue); // Corrected HandleType casing
             self.queue = 0;
             webutils.log("[WebGPUHandler] Queue released.");
         }
         if (self.device != 0) {
-            webgpu.releaseHandle(.Device, self.device); // Corrected HandleType casing
+            webgpu.releaseHandle(.device, self.device); // Corrected HandleType casing
             self.device = 0;
             webutils.log("[WebGPUHandler] Device released.");
         }
         if (self.adapter != 0) {
-            webgpu.releaseHandle(.Adapter, self.adapter); // Corrected HandleType casing
+            webgpu.releaseHandle(.adapter, self.adapter); // Corrected HandleType casing
             self.adapter = 0;
             webutils.log("[WebGPUHandler] Adapter released.");
         }

@@ -554,7 +554,7 @@ pub fn releaseHandle(handle_type: HandleType, handle: u32) void {
         .compute_pass_encoder => @intFromEnum(HandleType.compute_pass_encoder),
         .query_set => @intFromEnum(HandleType.query_set),
     };
-    env_wgpu_release_handle_js(type_id_for_js, handle);
+    env_wgpu_release_handle_js(@as(HandleType, @enumFromInt(type_id_for_js)), handle);
 }
 
 // Error set for functions that can return synchronous errors

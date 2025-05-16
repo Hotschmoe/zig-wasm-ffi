@@ -1,17 +1,42 @@
-const std = @import("std");
+const math = @import("std").math;
+const random = @import("std").crypto.random;
+const mem = @import("std").mem;
 const webgpu = @import("zig-wasm-ffi").webgpu;
 const WebGPUHandler = @import("webgpu_handler.zig").WebGPUHandler;
 const webutils = @import("zig-wasm-ffi").webutils; // Changed from: const log = @import("zig-wasm-ffi").utils.log;
-const math = std.math;
-const random = std.crypto.random;
 
 // Embed shader code
-const particle_binning_wgsl = @embedFile("../../shaders/particle_binning.wgsl");
-const particle_compute_wgsl = @embedFile("../../shaders/particle_compute.wgsl");
-const particle_prefix_sum_wgsl = @embedFile("../../shaders/particle_prefix_sum.wgsl");
-const particle_render_wgsl = @embedFile("../../shaders/particle_render.wgsl");
-const particle_sort_wgsl = @embedFile("../../shaders/particle_sort.wgsl");
-const particle_compose_wgsl = @embedFile("../../shaders/particle_compose.wgsl");
+const particle_binning_wgsl = @embedFile("../shaders/particle_binning.wgsl");
+const particle_compute_wgsl = @embedFile("../shaders/particle_compute.wgsl");
+const particle_prefix_sum_wgsl = @embedFile("../shaders/particle_prefix_sum.wgsl");
+const particle_render_wgsl = @embedFile("../shaders/particle_render.wgsl");
+const particle_sort_wgsl = @embedFile("../shaders/particle_sort.wgsl");
+const particle_compose_wgsl = @embedFile("../shaders/particle_compose.wgsl");
+
+// Helper function to calculate ceil(log2(n_val + 1))
+// Replaces std.math.ilog2Ceil(n_val + 1)
+fn ilog2Ceil_for_n_plus_1(n_val: u32) u32 {
+    if (n_val == 0) return 0; // bin_count = 0 -> (0+1)=1. ceil(log2(1)) = 0. iterations=0.
+    const val_plus_1 = n_val + 1;
+    // val_plus_1 will always be >= 1 here.
+    // if n_val = 0, val_plus_1 = 1. floor_log2 = 0. pow_of_2=true. result = 0.
+    // if n_val = 1, val_plus_1 = 2. floor_log2 = 1. pow_of_2=true. result = 1.
+    // if n_val = 2, val_plus_1 = 3. floor_log2 = 1. pow_of_2=false. result = 2.
+    // if n_val = 3, val_plus_1 = 4. floor_log2 = 2. pow_of_2=true. result = 2.
+
+    var x = val_plus_1;
+    var floor_log2: u32 = 0;
+    while (x > 1) {
+        x >>= 1;
+        floor_log2 += 1;
+    }
+
+    const is_power_of_2 = (val_plus_1 > 0) and ((val_plus_1 & (val_plus_1 - 1)) == 0);
+    if (!is_power_of_2) {
+        return floor_log2 + 1;
+    }
+    return floor_log2;
+}
 
 // --- Data Structs (mirroring WGSL) ---
 const Particle = extern struct {
@@ -95,7 +120,7 @@ const INITIAL_VELOCITY: f32 = 10.0;
 const HDR_FORMAT: webgpu.TextureFormat = .rgba16float;
 
 pub const Renderer = struct {
-    allocator: std.mem.Allocator,
+    allocator: mem.Allocator,
     wgpu_handler: *WebGPUHandler,
 
     // Shader Modules
@@ -189,7 +214,7 @@ pub const Renderer = struct {
     bin_count: u32,
     prefix_sum_iterations: u32,
 
-    pub fn init(allocator: std.mem.Allocator, wgpu_handler: *WebGPUHandler) !*Renderer {
+    pub fn init(allocator: mem.Allocator, wgpu_handler: *WebGPUHandler) !*Renderer {
         var self = try allocator.create(Renderer);
         self.* = .{
             .allocator = allocator,
@@ -267,7 +292,8 @@ pub const Renderer = struct {
             .prefix_sum_iterations = undefined,
         };
 
-        const device = wgpu_handler.device orelse return RendererError.DeviceOrQueueUnavailable;
+        const device = wgpu_handler.device;
+        if (device == 0) return RendererError.DeviceOrQueueUnavailable;
 
         // Calculate derived simulation parameters
         const sim_box_width_calc = self.simulation_box_width;
@@ -275,7 +301,7 @@ pub const Renderer = struct {
         const grid_size_x: f32 = @ceil(sim_box_width_calc / MAX_FORCE_RADIUS);
         const grid_size_y: f32 = @ceil(sim_box_height_calc / MAX_FORCE_RADIUS);
         self.bin_count = @intFromFloat(grid_size_x * grid_size_y);
-        self.prefix_sum_iterations = if (self.bin_count == 0) 0 else math.log2_ceil_u32(self.bin_count + 1);
+        self.prefix_sum_iterations = ilog2Ceil_for_n_plus_1(self.bin_count);
         webutils.log("DEBUG: Renderer.init: Calculated bin_count=" ++ "TODO_INT_TO_STRING" ++ ", prefix_sum_iterations=" ++ "TODO_INT_TO_STRING"); // Adjusted log
 
         // Initialize Shader Modules (existing code)
@@ -347,12 +373,11 @@ pub const Renderer = struct {
         const sim_box_height = self.simulation_box_height;
         const grid_size_x: f32 = @ceil(sim_box_width / MAX_FORCE_RADIUS);
         const grid_size_y: f32 = @ceil(sim_box_height / MAX_FORCE_RADIUS);
-        const bin_count: u32 = @intFromFloat(grid_size_x * grid_size_y);
-        const bin_offset_buffer_size = @sizeOf(u32) * (bin_count + 1);
+        const bin_count_calc: u32 = @intFromFloat(grid_size_x * grid_size_y); // Renamed to avoid conflict with self.bin_count for clarity
+        const bin_offset_buffer_size = @sizeOf(u32) * (bin_count_calc + 1);
 
-        // Max prefix sum iterations: ceil(log2(binCount + 1)) / 2) * 2 -> simplified to just ceil(log2(N))
-        const prefix_sum_iterations = if (bin_count == 0) 0 else math.log2_ceil_u32(bin_count + 1);
-        const prefix_sum_step_buffer_size = @sizeOf(u32) * prefix_sum_iterations * 64; // *64 due to JS example structure, likely for uniform offset alignment per step
+        const prefix_sum_iterations_calc = ilog2Ceil_for_n_plus_1(bin_count_calc); // Use calculated bin_count here
+        const prefix_sum_step_buffer_size = @sizeOf(u32) * prefix_sum_iterations_calc * 64; // *64 due to JS example structure, likely for uniform offset alignment per step
 
         self.species_buffer = try device.createBuffer(&webgpu.BufferDescriptor{
             .label = "species_buffer",
@@ -416,7 +441,8 @@ pub const Renderer = struct {
         });
 
         // Initial data population
-        const queue = self.wgpu_handler.queue orelse return RendererError.DeviceOrQueueUnavailable;
+        const queue = self.wgpu_handler.queue;
+        if (queue == 0) return RendererError.DeviceOrQueueUnavailable;
 
         // Species Data (example: distinct colors)
         const species_data = try self.allocator.alloc(Species, self.species_count);
@@ -427,7 +453,7 @@ pub const Renderer = struct {
             s.color[2] = @as(f32, @floatFromInt((i + 2) % 3)) * 0.5 + 0.2;
             s.color[3] = 1.0;
         }
-        queue.writeBuffer(self.species_buffer, 0, std.mem.sliceAsBytes(species_data));
+        try queue.writeBuffer(self.species_buffer, 0, mem.sliceAsBytes(species_data));
 
         // Forces Data (example: random forces)
         const forces_data = try self.allocator.alloc(Force, self.species_count * self.species_count);
@@ -438,32 +464,40 @@ pub const Renderer = struct {
             f.collision_strength = random.float(f32) * 20.0;
             f.collision_radius = random.float(f32) * f.radius * 0.5;
         }
-        queue.writeBuffer(self.forces_buffer, 0, std.mem.sliceAsBytes(forces_data));
+        try queue.writeBuffer(self.forces_buffer, 0, mem.sliceAsBytes(forces_data));
 
         // Particle Data (random initial state)
         const particle_data = try self.allocator.alloc(Particle, self.particle_count);
         defer self.allocator.free(particle_data);
         const half_width = sim_box_width / 2.0;
         const half_height = sim_box_height / 2.0;
+        var prng = random.DefaultPrng.init(0); // Initialize a PRNG for deterministic random numbers if desired, or use direct random.float/intRangeAtMost for non-deterministic
+
         for (particle_data) |*p| {
-            p.x = (random.float(f32) - 0.5) * 2.0 * half_width;
-            p.y = (random.float(f32) - 0.5) * 2.0 * half_height;
-            p.vx = (random.float(f32) - 0.5) * 2.0 * INITIAL_VELOCITY;
-            p.vy = (random.float(f32) - 0.5) * 2.0 * INITIAL_VELOCITY;
-            p.species_id = @as(f32, @floatFromInt(random.intRangeAtMost(u32, 0, self.species_count - 1)));
+            p.x = (prng.random().float(f32) - 0.5) * 2.0 * half_width;
+            p.y = (prng.random().float(f32) - 0.5) * 2.0 * half_height;
+            p.vx = (prng.random().float(f32) - 0.5) * 2.0 * INITIAL_VELOCITY;
+            p.vy = (prng.random().float(f32) - 0.5) * 2.0 * INITIAL_VELOCITY;
+            p.species_id = @as(f32, @floatFromInt(prng.random().intRangeAtMost(u32, 0, self.species_count - 1)));
         }
-        queue.writeBuffer(self.particle_buffer_a, 0, std.mem.sliceAsBytes(particle_data));
+        try queue.writeBuffer(self.particle_buffer_a, 0, mem.sliceAsBytes(particle_data));
         // particle_buffer_b doesn't need initial data, it's a destination first.
 
         // Bin Prefix Sum Step Size Buffer (powers of 2)
-        if (prefix_sum_iterations > 0) { // only if bin_count > 0
-            var step_data_aligned = try self.allocator.alloc(u32, prefix_sum_iterations * 64); // Each step value at offset i * 256 bytes
+        if (prefix_sum_iterations_calc > 0) { // only if bin_count > 0, use calculated value
+            var step_data_aligned = try self.allocator.alloc(u32, prefix_sum_iterations_calc * 64); // Each step value at offset i * 256 bytes
             defer self.allocator.free(step_data_aligned);
             @memset(step_data_aligned, 0); // Zero out, only specific indices are set
-            for (0..prefix_sum_iterations) |i| {
-                step_data_aligned[i * 64] = math.pow(u32, 2, i);
+            for (0..prefix_sum_iterations_calc) |i| {
+                // step_data_aligned[i * 64] = math.pow(u32, 2, i); // math.pow is for floats
+                var val: u32 = 1;
+                var j: u32 = 0;
+                while (j < i) : (j += 1) {
+                    val *= 2;
+                }
+                step_data_aligned[i * 64] = val; // 2^i
             }
-            queue.writeBuffer(self.bin_prefix_sum_step_size_buffer, 0, std.mem.sliceAsBytes(step_data_aligned));
+            try queue.writeBuffer(self.bin_prefix_sum_step_size_buffer, 0, mem.sliceAsBytes(step_data_aligned));
         }
 
         // Camera & Sim Options with some defaults (can be updated per frame)
@@ -473,7 +507,7 @@ pub const Renderer = struct {
             .pixels_per_unit = 1.0,
             ._padding = .{0} ** 1, // Adjusted padding to 1 f32 to make total 6 f32s = 24 bytes.
         };
-        queue.writeBuffer(self.camera_buffer, 0, std.mem.asBytes(&initial_cam_data));
+        try queue.writeBuffer(self.camera_buffer, 0, mem.asBytes(&initial_cam_data));
 
         const initial_sim_options = SimulationOptionsUniforms{
             .left = -half_width,
@@ -496,7 +530,7 @@ pub const Renderer = struct {
             ._padding2 = 0,
             ._padding3 = 0,
         };
-        queue.writeBuffer(self.simulation_options_buffer, 0, std.mem.asBytes(&initial_sim_options));
+        try queue.writeBuffer(self.simulation_options_buffer, 0, mem.asBytes(&initial_sim_options));
     }
 
     fn createPlaceholderTextures(self: *Renderer, device: webgpu.Device) !void {
@@ -507,11 +541,11 @@ pub const Renderer = struct {
             .size = .{ .width = 64, .height = 64, .depth_or_array_layers = 1 },
             .mip_level_count = 1,
             .sample_count = 1,
-            .dimension = "2d",
+            .dimension = .@"2d",
             .format = .rgba8unorm_srgb, // Format from JS example
-            .usage = webgpu.TextureUsage.TEXTURE_BINDING | webgpu.TextureUsage.COPY_DST | webgpu.TextureUsage.RENDER_ATTACHMENT, // As per JS
+            .usage = webgpu.GPUTextureUsage.TEXTURE_BINDING | webgpu.GPUTextureUsage.COPY_DST | webgpu.GPUTextureUsage.RENDER_ATTACHMENT, // As per JS
         });
-        self.blue_noise_texture_view = try self.blue_noise_texture.createView(&webgpu.TextureViewDescriptor{}); // Default view
+        self.blue_noise_texture_view = try webgpu.textureCreateView(self.blue_noise_texture, &webgpu.TextureViewDescriptor{}); // Default view
 
         // HDR Texture (placeholder, typically canvas sized, e.g., 1x1 initially)
         self.hdr_texture = try device.createTexture(&webgpu.TextureDescriptor{
@@ -519,11 +553,11 @@ pub const Renderer = struct {
             .size = .{ .width = 1, .height = 1, .depth_or_array_layers = 1 }, // Will be resized
             .mip_level_count = 1,
             .sample_count = 1,
-            .dimension = "2d",
+            .dimension = .@"2d",
             .format = .rgba16float, // HDR format from JS example
-            .usage = webgpu.TextureUsage.RENDER_ATTACHMENT | webgpu.TextureUsage.TEXTURE_BINDING,
+            .usage = webgpu.GPUTextureUsage.RENDER_ATTACHMENT | webgpu.GPUTextureUsage.TEXTURE_BINDING,
         });
-        self.hdr_texture_view = try self.hdr_texture.createView(&webgpu.TextureViewDescriptor{});
+        self.hdr_texture_view = try webgpu.textureCreateView(self.hdr_texture, &webgpu.TextureViewDescriptor{});
     }
 
     fn createBindGroupLayouts(self: *Renderer, device: webgpu.Device) !void {
@@ -545,6 +579,7 @@ pub const Renderer = struct {
         self.particle_advance_bgl = try device.createBindGroupLayout(&webgpu.BindGroupLayoutDescriptor{
             .label = "particle_advance_bgl",
             .entries = &particle_advance_bgl_entries,
+            .entries_len = particle_advance_bgl_entries.len,
         });
 
         // Particle Buffer Read-Only BGL (particles R, species R)
@@ -558,6 +593,7 @@ pub const Renderer = struct {
         self.particle_buffer_read_only_bgl = try device.createBindGroupLayout(&webgpu.BindGroupLayoutDescriptor{
             .label = "particle_buffer_read_only_bgl",
             .entries = &particle_read_only_bgl_entries,
+            .entries_len = particle_read_only_bgl_entries.len,
         });
 
         // Camera BGL (camera UBO)
@@ -568,6 +604,7 @@ pub const Renderer = struct {
         self.camera_bgl = try device.createBindGroupLayout(&webgpu.BindGroupLayoutDescriptor{
             .label = "camera_bgl",
             .entries = &camera_bgl_entries,
+            .entries_len = camera_bgl_entries.len,
         });
 
         // Simulation Options BGL (sim options UBO)
@@ -578,6 +615,7 @@ pub const Renderer = struct {
         self.simulation_options_bgl = try device.createBindGroupLayout(&webgpu.BindGroupLayoutDescriptor{
             .label = "simulation_options_bgl",
             .entries = &sim_options_bgl_entries,
+            .entries_len = sim_options_bgl_entries.len,
         });
 
         // Bin Fill Size BGL (bin_offset W storage)
@@ -590,6 +628,7 @@ pub const Renderer = struct {
         self.bin_fill_size_bgl = try device.createBindGroupLayout(&webgpu.BindGroupLayoutDescriptor{
             .label = "bin_fill_size_bgl",
             .entries = &bin_fill_size_bgl_entries,
+            .entries_len = bin_fill_size_bgl_entries.len,
         });
 
         // Bin Prefix Sum BGL (source R, dest W, step_size UBO with dynamic offset)
@@ -603,6 +642,7 @@ pub const Renderer = struct {
         self.bin_prefix_sum_bgl = try device.createBindGroupLayout(&webgpu.BindGroupLayoutDescriptor{
             .label = "bin_prefix_sum_bgl",
             .entries = &prefix_sum_bgl_entries,
+            .entries_len = prefix_sum_bgl_entries.len,
         });
 
         // Particle Sort BGL (source_particles R, dest_particles W, bin_offset R, bin_current_size_atomic W)
@@ -617,6 +657,7 @@ pub const Renderer = struct {
         self.particle_sort_bgl = try device.createBindGroupLayout(&webgpu.BindGroupLayoutDescriptor{
             .label = "particle_sort_bgl",
             .entries = &particle_sort_bgl_entries,
+            .entries_len = particle_sort_bgl_entries.len,
         });
 
         // Particle Compute Forces BGL (particles_src R, particles_dest W, bin_offset R, forces R)
@@ -631,18 +672,20 @@ pub const Renderer = struct {
         self.particle_compute_forces_bgl = try device.createBindGroupLayout(&webgpu.BindGroupLayoutDescriptor{
             .label = "particle_compute_forces_bgl",
             .entries = &particle_compute_forces_bgl_entries,
+            .entries_len = particle_compute_forces_bgl_entries.len,
         });
 
         // Compose BGL (hdrTexture texture_2d, blueNoiseTexture texture_2d)
         // Corresponds to JS composeBindGroupLayout
         // Shader: particle_compose.wgsl -> group(0) binding(0) hdrTexture, binding(1) blueNoiseTexture
         const compose_bgl_entries = [_]webgpu.BindGroupLayoutEntry{
-            webgpu.BindGroupLayoutEntry.newTexture(0, webgpu.ShaderStage.FRAGMENT, .{ .sample_type = .float, .view_dimension = "2d", .multisampled = false }),
-            webgpu.BindGroupLayoutEntry.newTexture(1, webgpu.ShaderStage.FRAGMENT, .{ .sample_type = .float, .view_dimension = "2d", .multisampled = false }), // Assuming blue noise is also sampled as float in shader, though format is unorm
+            webgpu.BindGroupLayoutEntry.newTexture(0, webgpu.ShaderStage.FRAGMENT, .{ .sample_type = .float, .view_dimension = .@"2d", .multisampled = false }),
+            webgpu.BindGroupLayoutEntry.newTexture(1, webgpu.ShaderStage.FRAGMENT, .{ .sample_type = .float, .view_dimension = .@"2d", .multisampled = false }), // Assuming blue noise is also sampled as float in shader, though format is unorm
         };
         self.compose_bgl = try device.createBindGroupLayout(&webgpu.BindGroupLayoutDescriptor{
             .label = "compose_bgl",
             .entries = &compose_bgl_entries,
+            .entries_len = compose_bgl_entries.len,
         });
     }
 
@@ -652,15 +695,17 @@ pub const Renderer = struct {
             .label = "particle_advance_bg_a",
             .layout = self.particle_advance_bgl,
             .entries = &[_]webgpu.BindGroupEntry{
-                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_a.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
+                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_a, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
             },
+            .entries_len = 1,
         });
         self.particle_advance_bg_b = try device.createBindGroup(&webgpu.BindGroupDescriptor{
             .label = "particle_advance_bg_b",
             .layout = self.particle_advance_bgl,
             .entries = &[_]webgpu.BindGroupEntry{
-                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_b.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
+                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_b, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
             },
+            .entries_len = 1,
         });
 
         // Particle Read-Only BGs
@@ -668,17 +713,19 @@ pub const Renderer = struct {
             .label = "particle_read_only_bg_a",
             .layout = self.particle_buffer_read_only_bgl,
             .entries = &[_]webgpu.BindGroupEntry{
-                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_a.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
-                .{ .binding = 1, .resource = .{ .buffer = .{ .buffer = self.species_buffer.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
+                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_a, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
+                .{ .binding = 1, .resource = .{ .buffer = .{ .buffer = self.species_buffer, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
             },
+            .entries_len = 2,
         });
         self.particle_read_only_bg_b = try device.createBindGroup(&webgpu.BindGroupDescriptor{
             .label = "particle_read_only_bg_b",
             .layout = self.particle_buffer_read_only_bgl,
             .entries = &[_]webgpu.BindGroupEntry{
-                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_b.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
-                .{ .binding = 1, .resource = .{ .buffer = .{ .buffer = self.species_buffer.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
+                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_b, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
+                .{ .binding = 1, .resource = .{ .buffer = .{ .buffer = self.species_buffer, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
             },
+            .entries_len = 2,
         });
 
         // Camera BG
@@ -686,8 +733,9 @@ pub const Renderer = struct {
             .label = "camera_bg",
             .layout = self.camera_bgl,
             .entries = &[_]webgpu.BindGroupEntry{
-                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.camera_buffer.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
+                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.camera_buffer, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
             },
+            .entries_len = 1,
         });
 
         // Simulation Options BG
@@ -695,8 +743,9 @@ pub const Renderer = struct {
             .label = "simulation_options_bg",
             .layout = self.simulation_options_bgl,
             .entries = &[_]webgpu.BindGroupEntry{
-                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.simulation_options_buffer.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
+                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.simulation_options_buffer, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
             },
+            .entries_len = 1,
         });
 
         // Bin Fill Size BGs
@@ -704,15 +753,17 @@ pub const Renderer = struct {
             .label = "bin_fill_size_main_target_bg",
             .layout = self.bin_fill_size_bgl,
             .entries = &[_]webgpu.BindGroupEntry{
-                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.bin_offset_buffer_a.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
+                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.bin_offset_buffer_a, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
             },
+            .entries_len = 1,
         });
         self.bin_fill_size_temp_target_bg = try device.createBindGroup(&webgpu.BindGroupDescriptor{
             .label = "bin_fill_size_temp_target_bg",
             .layout = self.bin_fill_size_bgl,
             .entries = &[_]webgpu.BindGroupEntry{
-                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.bin_offset_buffer_b.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
+                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.bin_offset_buffer_b, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
             },
+            .entries_len = 1,
         });
 
         // Bin Prefix Sum BGs
@@ -720,19 +771,21 @@ pub const Renderer = struct {
             .label = "bin_prefix_sum_ab_bg",
             .layout = self.bin_prefix_sum_bgl,
             .entries = &[_]webgpu.BindGroupEntry{
-                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.bin_offset_buffer_a.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // Source
-                .{ .binding = 1, .resource = .{ .buffer = .{ .buffer = self.bin_offset_buffer_b.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // Destination
-                .{ .binding = 2, .resource = .{ .buffer = .{ .buffer = self.bin_prefix_sum_step_size_buffer.handle, .offset = 0, .size = @sizeOf(u32) } } }, // step_size UBO
+                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.bin_offset_buffer_a, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // Source
+                .{ .binding = 1, .resource = .{ .buffer = .{ .buffer = self.bin_offset_buffer_b, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // Destination
+                .{ .binding = 2, .resource = .{ .buffer = .{ .buffer = self.bin_prefix_sum_step_size_buffer, .offset = 0, .size = @sizeOf(u32) } } }, // step_size UBO
             },
+            .entries_len = 3,
         });
         self.bin_prefix_sum_ba_bg = try device.createBindGroup(&webgpu.BindGroupDescriptor{
             .label = "bin_prefix_sum_ba_bg",
             .layout = self.bin_prefix_sum_bgl,
             .entries = &[_]webgpu.BindGroupEntry{
-                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.bin_offset_buffer_b.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // Source
-                .{ .binding = 1, .resource = .{ .buffer = .{ .buffer = self.bin_offset_buffer_a.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // Destination
-                .{ .binding = 2, .resource = .{ .buffer = .{ .buffer = self.bin_prefix_sum_step_size_buffer.handle, .offset = 0, .size = @sizeOf(u32) } } }, // step_size UBO
+                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.bin_offset_buffer_b, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // Source
+                .{ .binding = 1, .resource = .{ .buffer = .{ .buffer = self.bin_offset_buffer_a, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // Destination
+                .{ .binding = 2, .resource = .{ .buffer = .{ .buffer = self.bin_prefix_sum_step_size_buffer, .offset = 0, .size = @sizeOf(u32) } } }, // step_size UBO
             },
+            .entries_len = 3,
         });
 
         // Particle Sort BGs
@@ -741,22 +794,24 @@ pub const Renderer = struct {
             .label = "particle_sort_a_to_b_bg",
             .layout = self.particle_sort_bgl,
             .entries = &[_]webgpu.BindGroupEntry{
-                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_a.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // Source particles
-                .{ .binding = 1, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_b.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // Destination particles
-                .{ .binding = 2, .resource = .{ .buffer = .{ .buffer = self.bin_offset_buffer_a.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // Bin read offsets
-                .{ .binding = 3, .resource = .{ .buffer = .{ .buffer = self.bin_offset_buffer_b.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // Bin atomic counts (written here)
+                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_a, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // Source particles
+                .{ .binding = 1, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_b, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // Destination particles
+                .{ .binding = 2, .resource = .{ .buffer = .{ .buffer = self.bin_offset_buffer_a, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // Bin read offsets
+                .{ .binding = 3, .resource = .{ .buffer = .{ .buffer = self.bin_offset_buffer_b, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // Bin atomic counts (written here)
             },
+            .entries_len = 4,
         });
         // sort_b_to_a: particles_b (src), particles_a (dst), bin_offset_b (read offsets), bin_offset_a (atomic_write)
         self.particle_sort_b_to_a_bg = try device.createBindGroup(&webgpu.BindGroupDescriptor{
             .label = "particle_sort_b_to_a_bg",
             .layout = self.particle_sort_bgl,
             .entries = &[_]webgpu.BindGroupEntry{
-                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_b.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
-                .{ .binding = 1, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_a.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
-                .{ .binding = 2, .resource = .{ .buffer = .{ .buffer = self.bin_offset_buffer_b.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
-                .{ .binding = 3, .resource = .{ .buffer = .{ .buffer = self.bin_offset_buffer_a.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
+                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_b, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
+                .{ .binding = 1, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_a, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
+                .{ .binding = 2, .resource = .{ .buffer = .{ .buffer = self.bin_offset_buffer_b, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
+                .{ .binding = 3, .resource = .{ .buffer = .{ .buffer = self.bin_offset_buffer_a, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
             },
+            .entries_len = 4,
         });
 
         // Particle Compute Forces BGs
@@ -765,22 +820,24 @@ pub const Renderer = struct {
             .label = "particle_compute_forces_a_to_b_bg",
             .layout = self.particle_compute_forces_bgl,
             .entries = &[_]webgpu.BindGroupEntry{
-                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_a.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // particlesSource
-                .{ .binding = 1, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_b.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // particlesDestination
-                .{ .binding = 2, .resource = .{ .buffer = .{ .buffer = self.bin_offset_buffer_a.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // binOffset (assuming A has the final correct offsets after sort/prefix)
-                .{ .binding = 3, .resource = .{ .buffer = .{ .buffer = self.forces_buffer.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // forces
+                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_a, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // particlesSource
+                .{ .binding = 1, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_b, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // particlesDestination
+                .{ .binding = 2, .resource = .{ .buffer = .{ .buffer = self.bin_offset_buffer_a, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // binOffset (assuming A has the final correct offsets after sort/prefix)
+                .{ .binding = 3, .resource = .{ .buffer = .{ .buffer = self.forces_buffer, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // forces
             },
+            .entries_len = 4,
         });
         // compute_forces_b_to_a: particles_b (src), particles_a (dst), bin_offset_b (final offsets), forces_buffer
         self.particle_compute_forces_b_to_a_bg = try device.createBindGroup(&webgpu.BindGroupDescriptor{
             .label = "particle_compute_forces_b_to_a_bg",
             .layout = self.particle_compute_forces_bgl,
             .entries = &[_]webgpu.BindGroupEntry{
-                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_b.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
-                .{ .binding = 1, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_a.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
-                .{ .binding = 2, .resource = .{ .buffer = .{ .buffer = self.bin_offset_buffer_b.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
-                .{ .binding = 3, .resource = .{ .buffer = .{ .buffer = self.forces_buffer.handle, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
+                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_b, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
+                .{ .binding = 1, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_a, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
+                .{ .binding = 2, .resource = .{ .buffer = .{ .buffer = self.bin_offset_buffer_b, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
+                .{ .binding = 3, .resource = .{ .buffer = .{ .buffer = self.forces_buffer, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
             },
+            .entries_len = 4,
         });
 
         // Compose BG
@@ -788,9 +845,10 @@ pub const Renderer = struct {
             .label = "compose_bg",
             .layout = self.compose_bgl,
             .entries = &[_]webgpu.BindGroupEntry{
-                .{ .binding = 0, .resource = .{ .texture = .{ .texture_view = self.hdr_texture_view.handle } } },
-                .{ .binding = 1, .resource = .{ .texture = .{ .texture_view = self.blue_noise_texture_view.handle } } },
+                .{ .binding = 0, .resource = .{ .texture = .{ .texture_view = self.hdr_texture_view } } },
+                .{ .binding = 1, .resource = .{ .texture = .{ .texture_view = self.blue_noise_texture_view } } },
             },
+            .entries_len = 2,
         });
     }
 
@@ -802,6 +860,7 @@ pub const Renderer = struct {
                 self.particle_advance_bgl,
                 self.simulation_options_bgl,
             },
+            .bind_group_layouts_len = 2,
         });
 
         // Binning PL: uses particle_buffer_read_only_bgl, simulation_options_bgl, bin_fill_size_bgl
@@ -812,12 +871,14 @@ pub const Renderer = struct {
                 self.simulation_options_bgl, // Group 1
                 self.bin_fill_size_bgl, // Group 2
             },
+            .bind_group_layouts_len = 3,
         });
 
         // Prefix Sum PL: uses bin_prefix_sum_bgl
         self.prefix_sum_pl = try device.createPipelineLayout(&webgpu.PipelineLayoutDescriptor{
             .label = "prefix_sum_pl",
             .bind_group_layouts = &[_]webgpu.BindGroupLayout{self.bin_prefix_sum_bgl},
+            .bind_group_layouts_len = 1,
         });
 
         // Particle Sort PL: uses particle_sort_bgl, simulation_options_bgl
@@ -827,6 +888,7 @@ pub const Renderer = struct {
                 self.particle_sort_bgl, // Group 0
                 self.simulation_options_bgl, // Group 1
             },
+            .bind_group_layouts_len = 2,
         });
 
         // Particle Compute Forces PL: uses particle_compute_forces_bgl, simulation_options_bgl
@@ -836,6 +898,7 @@ pub const Renderer = struct {
                 self.particle_compute_forces_bgl, // Group 0
                 self.simulation_options_bgl, // Group 1
             },
+            .bind_group_layouts_len = 2,
         });
 
         // Particle Render PL: uses particle_buffer_read_only_bgl, camera_bgl
@@ -845,12 +908,14 @@ pub const Renderer = struct {
                 self.particle_buffer_read_only_bgl, // Group 0
                 self.camera_bgl, // Group 1
             },
+            .bind_group_layouts_len = 2,
         });
 
         // Compose PL: uses compose_bgl
         self.compose_pl = try device.createPipelineLayout(&webgpu.PipelineLayoutDescriptor{
             .label = "compose_pl",
             .bind_group_layouts = &[_]webgpu.BindGroupLayout{self.compose_bgl},
+            .bind_group_layouts_len = 1,
         });
     }
 
@@ -915,6 +980,7 @@ pub const Renderer = struct {
                 .module = self.render_module,
                 .entry_point = "fragmentGlow",
                 .targets = &[_]webgpu.ColorTargetState{particle_hdr_target_state},
+                .targets_len = 1,
             },
             .multisample = .{ .count = 1, .mask = 0xFFFFFFFF }, // Default multisample state
         });
@@ -927,6 +993,7 @@ pub const Renderer = struct {
                 .module = self.render_module,
                 .entry_point = "fragmentCircle",
                 .targets = &[_]webgpu.ColorTargetState{particle_hdr_target_state},
+                .targets_len = 1,
             },
             .multisample = .{ .count = 1, .mask = 0xFFFFFFFF },
         });
@@ -939,6 +1006,7 @@ pub const Renderer = struct {
                 .module = self.render_module,
                 .entry_point = "fragmentPoint",
                 .targets = &[_]webgpu.ColorTargetState{particle_hdr_target_state},
+                .targets_len = 1,
             },
             .multisample = .{ .count = 1, .mask = 0xFFFFFFFF },
         });
@@ -958,6 +1026,7 @@ pub const Renderer = struct {
                 .module = self.compose_module,
                 .entry_point = "fragmentMain",
                 .targets = &[_]webgpu.ColorTargetState{compose_target_state},
+                .targets_len = 1,
             },
             .multisample = .{ .count = 1, .mask = 0xFFFFFFFF },
         });
@@ -966,79 +1035,79 @@ pub const Renderer = struct {
     pub fn deinit(self: *Renderer) void {
         webutils.log("DEBUG: Renderer.deinit: Releasing resources..."); // Adjusted log
         const device = self.wgpu_handler.device;
-        if (device != null) {
+        if (device != 0) { // Check against 0 instead of null
             // Buffers & Textures
-            webgpu.releaseHandle(.Buffer, self.species_buffer.handle);
-            webgpu.releaseHandle(.Buffer, self.forces_buffer.handle);
-            webgpu.releaseHandle(.Buffer, self.particle_buffer_a.handle);
-            webgpu.releaseHandle(.Buffer, self.particle_buffer_b.handle);
-            webgpu.releaseHandle(.Buffer, self.bin_offset_buffer_a.handle);
-            webgpu.releaseHandle(.Buffer, self.bin_offset_buffer_b.handle);
-            webgpu.releaseHandle(.Buffer, self.bin_prefix_sum_step_size_buffer.handle);
-            webgpu.releaseHandle(.Buffer, self.camera_buffer.handle);
-            webgpu.releaseHandle(.Buffer, self.simulation_options_buffer.handle);
-            webgpu.releaseHandle(.TextureView, self.blue_noise_texture_view.handle);
-            webgpu.releaseHandle(.Texture, self.blue_noise_texture.handle);
-            webgpu.releaseHandle(.TextureView, self.hdr_texture_view.handle);
-            webgpu.releaseHandle(.Texture, self.hdr_texture.handle);
+            webgpu.releaseHandle(.buffer, self.species_buffer);
+            webgpu.releaseHandle(.buffer, self.forces_buffer);
+            webgpu.releaseHandle(.buffer, self.particle_buffer_a);
+            webgpu.releaseHandle(.buffer, self.particle_buffer_b);
+            webgpu.releaseHandle(.buffer, self.bin_offset_buffer_a);
+            webgpu.releaseHandle(.buffer, self.bin_offset_buffer_b);
+            webgpu.releaseHandle(.buffer, self.bin_prefix_sum_step_size_buffer);
+            webgpu.releaseHandle(.buffer, self.camera_buffer);
+            webgpu.releaseHandle(.buffer, self.simulation_options_buffer);
+            webgpu.releaseHandle(.texture_view, self.blue_noise_texture_view);
+            webgpu.releaseHandle(.texture, self.blue_noise_texture);
+            webgpu.releaseHandle(.texture_view, self.hdr_texture_view);
+            webgpu.releaseHandle(.texture, self.hdr_texture);
 
             // Bind Groups
-            webgpu.releaseHandle(.BindGroup, self.particle_advance_bg_a.handle);
-            webgpu.releaseHandle(.BindGroup, self.particle_advance_bg_b.handle);
-            webgpu.releaseHandle(.BindGroup, self.particle_read_only_bg_a.handle);
-            webgpu.releaseHandle(.BindGroup, self.particle_read_only_bg_b.handle);
-            webgpu.releaseHandle(.BindGroup, self.camera_bg.handle);
-            webgpu.releaseHandle(.BindGroup, self.simulation_options_bg.handle);
-            webgpu.releaseHandle(.BindGroup, self.bin_fill_size_main_target_bg.handle);
-            webgpu.releaseHandle(.BindGroup, self.bin_fill_size_temp_target_bg.handle);
-            webgpu.releaseHandle(.BindGroup, self.bin_prefix_sum_ab_bg.handle);
-            webgpu.releaseHandle(.BindGroup, self.bin_prefix_sum_ba_bg.handle);
-            webgpu.releaseHandle(.BindGroup, self.particle_sort_a_to_b_bg.handle);
-            webgpu.releaseHandle(.BindGroup, self.particle_sort_b_to_a_bg.handle);
-            webgpu.releaseHandle(.BindGroup, self.particle_compute_forces_a_to_b_bg.handle);
-            webgpu.releaseHandle(.BindGroup, self.particle_compute_forces_b_to_a_bg.handle);
-            webgpu.releaseHandle(.BindGroup, self.compose_bg.handle);
+            webgpu.releaseHandle(.bind_group, self.particle_advance_bg_a);
+            webgpu.releaseHandle(.bind_group, self.particle_advance_bg_b);
+            webgpu.releaseHandle(.bind_group, self.particle_read_only_bg_a);
+            webgpu.releaseHandle(.bind_group, self.particle_read_only_bg_b);
+            webgpu.releaseHandle(.bind_group, self.camera_bg);
+            webgpu.releaseHandle(.bind_group, self.simulation_options_bg);
+            webgpu.releaseHandle(.bind_group, self.bin_fill_size_main_target_bg);
+            webgpu.releaseHandle(.bind_group, self.bin_fill_size_temp_target_bg);
+            webgpu.releaseHandle(.bind_group, self.bin_prefix_sum_ab_bg);
+            webgpu.releaseHandle(.bind_group, self.bin_prefix_sum_ba_bg);
+            webgpu.releaseHandle(.bind_group, self.particle_sort_a_to_b_bg);
+            webgpu.releaseHandle(.bind_group, self.particle_sort_b_to_a_bg);
+            webgpu.releaseHandle(.bind_group, self.particle_compute_forces_a_to_b_bg);
+            webgpu.releaseHandle(.bind_group, self.particle_compute_forces_b_to_a_bg);
+            webgpu.releaseHandle(.bind_group, self.compose_bg);
 
             // Pipelines
-            webgpu.releaseHandle(.ComputePipeline, self.bin_clear_size_pipeline.handle);
-            webgpu.releaseHandle(.ComputePipeline, self.bin_fill_size_pipeline.handle);
-            webgpu.releaseHandle(.ComputePipeline, self.bin_prefix_sum_pipeline.handle);
-            webgpu.releaseHandle(.ComputePipeline, self.particle_sort_clear_size_pipeline.handle);
-            webgpu.releaseHandle(.ComputePipeline, self.particle_sort_pipeline.handle);
-            webgpu.releaseHandle(.ComputePipeline, self.particle_compute_forces_pipeline.handle);
-            webgpu.releaseHandle(.ComputePipeline, self.particle_advance_pipeline.handle);
-            webgpu.releaseHandle(.RenderPipeline, self.particle_render_glow_pipeline.handle);
-            webgpu.releaseHandle(.RenderPipeline, self.particle_render_circle_pipeline.handle);
-            webgpu.releaseHandle(.RenderPipeline, self.particle_render_point_pipeline.handle);
-            webgpu.releaseHandle(.RenderPipeline, self.compose_pipeline.handle);
+            webgpu.releaseHandle(.compute_pipeline, self.bin_clear_size_pipeline);
+            webgpu.releaseHandle(.compute_pipeline, self.bin_fill_size_pipeline);
+            webgpu.releaseHandle(.compute_pipeline, self.bin_prefix_sum_pipeline);
+            webgpu.releaseHandle(.compute_pipeline, self.particle_sort_clear_size_pipeline);
+            webgpu.releaseHandle(.compute_pipeline, self.particle_sort_pipeline);
+            webgpu.releaseHandle(.compute_pipeline, self.particle_compute_forces_pipeline);
+            webgpu.releaseHandle(.compute_pipeline, self.particle_advance_pipeline);
+            webgpu.releaseHandle(.render_pipeline, self.particle_render_glow_pipeline);
+            webgpu.releaseHandle(.render_pipeline, self.particle_render_circle_pipeline);
+            webgpu.releaseHandle(.render_pipeline, self.particle_render_point_pipeline);
+            webgpu.releaseHandle(.render_pipeline, self.compose_pipeline);
 
             // Pipeline Layouts
-            webgpu.releaseHandle(.PipelineLayout, self.particle_advance_pl.handle);
-            webgpu.releaseHandle(.PipelineLayout, self.binning_pl.handle);
-            webgpu.releaseHandle(.PipelineLayout, self.prefix_sum_pl.handle);
-            webgpu.releaseHandle(.PipelineLayout, self.particle_sort_pl.handle);
-            webgpu.releaseHandle(.PipelineLayout, self.particle_compute_forces_pl.handle);
-            webgpu.releaseHandle(.PipelineLayout, self.particle_render_pl.handle);
-            webgpu.releaseHandle(.PipelineLayout, self.compose_pl.handle);
+            webgpu.releaseHandle(.pipeline_layout, self.particle_advance_pl);
+            webgpu.releaseHandle(.pipeline_layout, self.binning_pl);
+            webgpu.releaseHandle(.pipeline_layout, self.prefix_sum_pl);
+            webgpu.releaseHandle(.pipeline_layout, self.particle_sort_pl);
+            webgpu.releaseHandle(.pipeline_layout, self.particle_compute_forces_pl);
+            webgpu.releaseHandle(.pipeline_layout, self.particle_render_pl);
+            webgpu.releaseHandle(.pipeline_layout, self.compose_pl);
 
             // Bind Group Layouts
-            webgpu.releaseHandle(.BindGroupLayout, self.particle_advance_bgl.handle);
-            webgpu.releaseHandle(.BindGroupLayout, self.particle_buffer_read_only_bgl.handle);
-            webgpu.releaseHandle(.BindGroupLayout, self.camera_bgl.handle);
-            webgpu.releaseHandle(.BindGroupLayout, self.simulation_options_bgl.handle);
-            webgpu.releaseHandle(.BindGroupLayout, self.bin_fill_size_bgl.handle);
-            webgpu.releaseHandle(.BindGroupLayout, self.bin_prefix_sum_bgl.handle);
-            webgpu.releaseHandle(.BindGroupLayout, self.particle_sort_bgl.handle);
-            webgpu.releaseHandle(.BindGroupLayout, self.particle_compute_forces_bgl.handle);
-            webgpu.releaseHandle(.BindGroupLayout, self.compose_bgl.handle);
+            webgpu.releaseHandle(.bind_group_layout, self.particle_advance_bgl);
+            webgpu.releaseHandle(.bind_group_layout, self.particle_buffer_read_only_bgl);
+            webgpu.releaseHandle(.bind_group_layout, self.camera_bgl);
+            webgpu.releaseHandle(.bind_group_layout, self.simulation_options_bgl);
+            webgpu.releaseHandle(.bind_group_layout, self.bin_fill_size_bgl);
+            webgpu.releaseHandle(.bind_group_layout, self.bin_prefix_sum_bgl);
+            webgpu.releaseHandle(.bind_group_layout, self.particle_sort_bgl);
+            webgpu.releaseHandle(.bind_group_layout, self.particle_compute_forces_bgl);
+            webgpu.releaseHandle(.bind_group_layout, self.compose_bgl);
 
             // Shader Modules
-            webgpu.releaseHandle(.ShaderModule, self.binning_module.handle);
-            webgpu.releaseHandle(.ShaderModule, self.compute_module.handle);
-            webgpu.releaseHandle(.ShaderModule, self.prefix_sum_module.handle);
-            webgpu.releaseHandle(.ShaderModule, self.render_module.handle);
-            webgpu.releaseHandle(.ShaderModule, self.sort_module.handle);
-            webgpu.releaseHandle(.ShaderModule, self.compose_module.handle);
+            webgpu.releaseHandle(.shader_module, self.binning_module);
+            webgpu.releaseHandle(.shader_module, self.compute_module);
+            webgpu.releaseHandle(.shader_module, self.prefix_sum_module);
+            webgpu.releaseHandle(.shader_module, self.render_module);
+            webgpu.releaseHandle(.shader_module, self.sort_module);
+            webgpu.releaseHandle(.shader_module, self.compose_module);
         } else {
             webutils.log("WARN: Renderer.deinit: Device was null. Handles may not be released correctly if not already undefined."); // Adjusted log
         }
@@ -1061,8 +1130,10 @@ pub const Renderer = struct {
     }
 
     pub fn renderFrame(self: *Renderer) !void {
-        const device = self.wgpu_handler.device orelse return RendererError.DeviceOrQueueUnavailable;
-        const queue = self.wgpu_handler.queue orelse return RendererError.DeviceOrQueueUnavailable;
+        const device = self.wgpu_handler.device;
+        if (device == 0) return RendererError.DeviceOrQueueUnavailable;
+        const queue = self.wgpu_handler.queue;
+        if (queue == 0) return RendererError.DeviceOrQueueUnavailable;
 
         const workgroup_size: u32 = 64; // Common workgroup size for these shaders
 
@@ -1085,13 +1156,13 @@ pub const Renderer = struct {
             });
 
             // Determine which particle_read_only_bg to use based on current_particle_buffer
-            const current_particle_bg = if (self.current_particle_buffer.handle == self.particle_buffer_a.handle)
+            const current_particle_bg = if (self.current_particle_buffer == self.particle_buffer_a)
                 self.particle_read_only_bg_a
             else
                 self.particle_read_only_bg_b;
 
             // Determine which bin_fill_size_bg to use (targets self.current_bin_offset_buffer)
-            const target_bin_fill_bg = if (self.current_bin_offset_buffer.handle == self.bin_offset_buffer_a.handle)
+            const target_bin_fill_bg = if (self.current_bin_offset_buffer == self.bin_offset_buffer_a)
                 self.bin_fill_size_main_target_bg // Targets bin_offset_buffer_a
             else
                 self.bin_fill_size_temp_target_bg; // Targets bin_offset_buffer_b
@@ -1112,18 +1183,18 @@ pub const Renderer = struct {
             pass_encoder.dispatchWorkgroups(get_dispatch_count(self.particle_count, workgroup_size), 1, 1);
 
             pass_encoder.end();
-            webgpu.releaseHandle(pass_encoder.handle, .ComputePassEncoder); // Release pass encoder
+            webgpu.releaseHandle(.compute_pass_encoder, pass_encoder); // Release pass encoder
         }
-        webutils.log("DEBUG: renderFrame: Binning Pass Complete. Counts in current_bin_offset_buffer ('" ++ (self.current_bin_offset_buffer.label orelse "-") ++ "')"); // Adjusted log
+        webutils.log("DEBUG: renderFrame: Binning Pass Complete. Counts in current_bin_offset_buffer ('" ++ (if (self.current_bin_offset_buffer == self.bin_offset_buffer_a) "binA" else "binB") ++ "')"); // Adjusted log
 
         // --- 2. Prefix Sum Pass ---
         // Operates on self.current_bin_offset_buffer (input counts) and self.next_bin_offset_buffer (output/ping-pong target).
         // Goal: self.bin_offset_buffer_a should contain the final prefix sum results.
         // self.bin_offset_buffer_b is used as scratch / intermediate storage during ping-ponging.
-        webutils.log("DEBUG: renderFrame: Starting Prefix Sum Pass (" ++ "TODO_INT_TO_STRING" ++ " iterations). Initial input: '" ++ (self.current_bin_offset_buffer.label orelse "-") ++ "', temp target: '" ++ (self.next_bin_offset_buffer.label orelse "-") ++ "'"); // Adjusted log
+        webutils.log("DEBUG: renderFrame: Starting Prefix Sum Pass (" ++ "TODO_INT_TO_STRING" ++ " iterations). Initial input: '" ++ (if (self.current_bin_offset_buffer == self.bin_offset_buffer_a) "binA" else "binB") ++ "', temp target: '" ++ (if (self.next_bin_offset_buffer == self.bin_offset_buffer_a) "binA" else "binB") ++ "'"); // Adjusted log
         if (self.prefix_sum_iterations > 0) {
             // `read_from_A_implies_current_is_A` tracks if the *source* for the current step is bin_offset_buffer_a.
-            var read_from_A_implies_current_is_A: bool = (self.current_bin_offset_buffer.handle == self.bin_offset_buffer_a.handle);
+            var read_from_A_implies_current_is_A: bool = (self.current_bin_offset_buffer == self.bin_offset_buffer_a);
 
             const pass_encoder = encoder.beginComputePass(&webgpu.ComputePassDescriptor{
                 .label = "prefix_sum_pass",
@@ -1143,7 +1214,7 @@ pub const Renderer = struct {
                 read_from_A_implies_current_is_A = !read_from_A_implies_current_is_A; // Toggle: destination of this step is source for next.
             }
             pass_encoder.end();
-            webgpu.releaseHandle(pass_encoder.handle, .ComputePassEncoder);
+            webgpu.releaseHandle(.compute_pass_encoder, pass_encoder);
 
             // After the loop, `read_from_A_implies_current_is_A` indicates where the *next read would be from* if loop continued.
             // So, if true, the last write was to B. If false, the last write was to A.
@@ -1158,17 +1229,17 @@ pub const Renderer = struct {
                 // Result is in bin_offset_buffer_b. Need to copy to bin_offset_buffer_a for subsequent passes.
                 webutils.log("DEBUG: Prefix sum result is in bin_offset_buffer_b. Copying to bin_offset_buffer_a."); // Adjusted log
                 const size_to_copy = @sizeOf(u32) * (self.bin_count + 1);
-                encoder.copyBufferToBuffer(self.bin_offset_buffer_b.handle, 0, self.bin_offset_buffer_a.handle, 0, size_to_copy);
+                encoder.copyBufferToBuffer(self.bin_offset_buffer_b, 0, self.bin_offset_buffer_a, 0, size_to_copy);
                 self.current_bin_offset_buffer = self.bin_offset_buffer_a; // A now has the results
                 self.next_bin_offset_buffer = self.bin_offset_buffer_b; // B is scratch
             }
         }
-        webutils.log("DEBUG: renderFrame: Prefix Sum Pass Complete. Final offsets ensured in '" ++ (self.current_bin_offset_buffer.label orelse "-") ++ "' (bin_offset_buffer_a). Scratch bin is '" ++ (self.next_bin_offset_buffer.label orelse "-") ++ "'."); // Adjusted log
+        webutils.log("DEBUG: renderFrame: Prefix Sum Pass Complete. Final offsets ensured in '" ++ (if (self.current_bin_offset_buffer == self.bin_offset_buffer_a) "binA" else "binB") ++ "' (bin_offset_buffer_a). Scratch bin is '" ++ (if (self.next_bin_offset_buffer == self.bin_offset_buffer_a) "binA" else "binB") ++ "'."); // Adjusted log
 
         // --- 3. Sort Pass ---
         // Input: self.current_particle_buffer, self.bin_offset_buffer_a (true offsets from prefix sum)
         // Output: self.next_particle_buffer (sorted particles). self.bin_offset_buffer_b is used for atomic counts.
-        webutils.log("DEBUG: renderFrame: Starting Sort Pass. Input particles: '" ++ (self.current_particle_buffer.label orelse "-") ++ "' ('" ++ (if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB") ++ "'), Output to: '" ++ (self.next_particle_buffer.label orelse "-") ++ "' ('" ++ (if (self.next_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB") ++ "'). Offsets from '" ++ (self.bin_offset_buffer_a.label orelse "-") ++ "', Atomics to '" ++ (self.bin_offset_buffer_b.label orelse "-") ++ "'"); // Adjusted log
+        webutils.log("DEBUG: renderFrame: Starting Sort Pass. Input particles: '" ++ (if (self.current_particle_buffer == self.particle_buffer_a) "pA" else "pB") ++ "', Output to: '" ++ (if (self.next_particle_buffer == self.particle_buffer_a) "pA" else "pB") ++ "'). Offsets from '" ++ (if (self.bin_offset_buffer_a == self.bin_offset_buffer_a) "binA" else "binB") ++ "', Atomics to '" ++ (if (self.bin_offset_buffer_b == self.bin_offset_buffer_a) "binA" else "binB") ++ "'"); // Adjusted log
         {
             const pass_encoder = encoder.beginComputePass(&webgpu.ComputePassDescriptor{
                 .label = "sort_pass",
@@ -1182,10 +1253,10 @@ pub const Renderer = struct {
             var sort_bg: webgpu.BindGroup = undefined;
             var clear_target_label: []const u8 = "unknown";
 
-            if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) {
+            if (self.current_particle_buffer == self.particle_buffer_a) {
                 // Sorting from pA to pB. Use bA for offsets, bB for atomics.
                 sort_bg = self.particle_sort_a_to_b_bg;
-                clear_target_label = self.bin_offset_buffer_b.label orelse "bin_offset_buffer_b";
+                clear_target_label = "bin_offset_buffer_b";
             } else { // current_particle_buffer is pB
                 // Sorting from pB to pA. We need to use bA for offsets and bB for atomics.
                 // particle_sort_b_to_a_bg expects to read offsets from bB and write atomics to bA.
@@ -1199,10 +1270,10 @@ pub const Renderer = struct {
                 // And that this BG correctly uses bA for read-offsets and bB for atomic-writes if such a BG were defined.
                 // Since it's not, we will use particle_sort_b_to_a_bg and acknowledge the bin offset mismatch.
                 sort_bg = self.particle_sort_b_to_a_bg;
-                clear_target_label = self.bin_offset_buffer_a.label orelse "bin_offset_buffer_a";
-                webutils.log("WARN: Using particle_sort_b_to_a_bg. This will clear '" ++ clear_target_label ++ "' for atomics & read offsets from '" ++ (self.bin_offset_buffer_b.label orelse "-") ++ "'."); // Adjusted log
+                clear_target_label = "bin_offset_buffer_a";
+                webutils.log("WARN: Using particle_sort_b_to_a_bg. This will clear '" ++ clear_target_label ++ "' for atomics & read offsets from '" ++ (if (self.bin_offset_buffer_b == self.bin_offset_buffer_a) "binA" else "binB") ++ "'."); // Adjusted log
             }
-            webutils.log("DEBUG: Sort Pass: Using BG '" ++ (sort_bg.label orelse "-") ++ "'. Clearing atomic counts in buffer targeted by its 4th binding ('" ++ clear_target_label ++ "')."); // Adjusted log
+            webutils.log("DEBUG: Sort Pass: Using BG '" ++ (if (sort_bg == self.particle_sort_a_to_b_bg) "sort_a_to_b" else "sort_b_to_a") ++ "'. Clearing atomic counts in buffer targeted by its 4th binding ('" ++ clear_target_label ++ "')."); // Adjusted log
 
             // Clear atomic counts buffer (binding 3 of the chosen sort_bg)
             pass_encoder.setPipeline(self.particle_sort_clear_size_pipeline);
@@ -1217,15 +1288,15 @@ pub const Renderer = struct {
             pass_encoder.dispatchWorkgroups(get_dispatch_count(self.particle_count, workgroup_size), 1, 1);
 
             pass_encoder.end();
-            webgpu.releaseHandle(pass_encoder.handle, .ComputePassEncoder);
+            webgpu.releaseHandle(.compute_pass_encoder, pass_encoder);
         }
         swapGpuBuffers(&self.current_particle_buffer, &self.next_particle_buffer); // next_particle_buffer (now sorted) becomes current.
-        webutils.log("DEBUG: renderFrame: Sort Pass Complete. Sorted particles now in '" ++ (self.current_particle_buffer.label orelse "-") ++ "' ('" ++ (if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB") ++ "')."); // Adjusted log
+        webutils.log("DEBUG: renderFrame: Sort Pass Complete. Sorted particles now in '" ++ (if (self.current_particle_buffer == self.particle_buffer_a) "pA" else "pB") ++ "')."); // Adjusted log
 
         // --- 4. Compute Forces Pass ---
         // Input: self.current_particle_buffer (sorted), self.bin_offset_buffer_a (true offsets)
         // Output: self.next_particle_buffer (particles with updated forces/velocities)
-        webutils.log("DEBUG: renderFrame: Starting Compute Forces. Input '" ++ (self.current_particle_buffer.label orelse "-") ++ "' ('" ++ (if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB") ++ "'), Output to '" ++ (self.next_particle_buffer.label orelse "-") ++ "' ('" ++ (if (self.next_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB") ++ "'). Offsets from '" ++ (self.bin_offset_buffer_a.label orelse "-") ++ "'."); // Adjusted log
+        webutils.log("DEBUG: renderFrame: Starting Compute Forces. Input '" ++ (if (self.current_particle_buffer == self.particle_buffer_a) "pA" else "pB") ++ "', Output to '" ++ (if (self.next_particle_buffer == self.particle_buffer_a) "pA" else "pB") ++ "'). Offsets from '" ++ (if (self.bin_offset_buffer_a == self.bin_offset_buffer_a) "binA" else "binB") ++ "'."); // Adjusted log
         {
             const pass_encoder = encoder.beginComputePass(&webgpu.ComputePassDescriptor{
                 .label = "compute_forces_pass",
@@ -1235,7 +1306,7 @@ pub const Renderer = struct {
             // particle_compute_forces_a_to_b_bg: pA (src), pB (dst), bA (offsets), forces
             // particle_compute_forces_b_to_a_bg: pB (src), pA (dst), bB (offsets), forces
             // We need to read offsets from bin_offset_buffer_a.
-            if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) {
+            if (self.current_particle_buffer == self.particle_buffer_a) {
                 // Current is pA (sorted). Read pA, bA. Write pB.
                 forces_bg = self.particle_compute_forces_a_to_b_bg;
             } else { // Current is pB (sorted).
@@ -1245,44 +1316,44 @@ pub const Renderer = struct {
                 webutils.log("WARN: Compute Forces: current_particle_buffer is pB. particle_compute_forces_b_to_a_bg expects offsets from bB, but bA has true offsets. Known issue."); // Adjusted log
                 forces_bg = self.particle_compute_forces_b_to_a_bg;
             }
-            webutils.log("DEBUG: Compute Forces: Using BG '" ++ (forces_bg.label orelse "-") ++ "'."); // Adjusted log
+            webutils.log("DEBUG: Compute Forces: Using BG '" ++ (if (forces_bg == self.particle_compute_forces_a_to_b_bg) "forces_a_to_b" else "forces_b_to_a") ++ "'."); // Adjusted log
 
             pass_encoder.setPipeline(self.particle_compute_forces_pipeline);
             pass_encoder.setBindGroup(0, forces_bg, &.{});
             pass_encoder.setBindGroup(1, self.simulation_options_bg, &.{});
             pass_encoder.dispatchWorkgroups(get_dispatch_count(self.particle_count, workgroup_size), 1, 1);
             pass_encoder.end();
-            webgpu.releaseHandle(pass_encoder.handle, .ComputePassEncoder);
+            webgpu.releaseHandle(.compute_pass_encoder, pass_encoder);
         }
         swapGpuBuffers(&self.current_particle_buffer, &self.next_particle_buffer); // next_particle_buffer (with new velocities) becomes current.
-        webutils.log("DEBUG: renderFrame: Compute Forces Complete. Velocities updated in '" ++ (self.current_particle_buffer.label orelse "-") ++ "' ('" ++ (if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB") ++ "')."); // Adjusted log
+        webutils.log("DEBUG: renderFrame: Compute Forces Complete. Velocities updated in '" ++ (if (self.current_particle_buffer == self.particle_buffer_a) "pA" else "pB") ++ "')."); // Adjusted log
 
         // --- 5. Advance Particles Pass ---
         // Input/Output: self.current_particle_buffer (updated in-place with new positions)
-        webutils.log("DEBUG: renderFrame: Starting Advance Particles. Target '" ++ (self.current_particle_buffer.label orelse "-") ++ "' ('" ++ (if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB") ++ "')."); // Adjusted log
+        webutils.log("DEBUG: renderFrame: Starting Advance Particles. Target '" ++ (if (self.current_particle_buffer == self.particle_buffer_a) "pA" else "pB") ++ "')."); // Adjusted log
         {
             const pass_encoder = encoder.beginComputePass(&webgpu.ComputePassDescriptor{
                 .label = "advance_particles_pass",
             });
 
-            const advance_bg = if (self.current_particle_buffer.handle == self.particle_buffer_a.handle)
+            const advance_bg = if (self.current_particle_buffer == self.particle_buffer_a)
                 self.particle_advance_bg_a // Operates on pA
             else
                 self.particle_advance_bg_b; // Operates on pB
-            webutils.log("DEBUG: Advance Particles: Using BG '" ++ (advance_bg.label orelse "-") ++ "'."); // Adjusted log
+            webutils.log("DEBUG: Advance Particles: Using BG '" ++ (if (advance_bg == self.particle_advance_bg_a) "advance_a" else "advance_b") ++ "'."); // Adjusted log
 
             pass_encoder.setPipeline(self.particle_advance_pipeline);
             pass_encoder.setBindGroup(0, advance_bg, &.{});
             pass_encoder.setBindGroup(1, self.simulation_options_bg, &.{});
             pass_encoder.dispatchWorkgroups(get_dispatch_count(self.particle_count, workgroup_size), 1, 1);
             pass_encoder.end();
-            webgpu.releaseHandle(pass_encoder.handle, .ComputePassEncoder);
+            webgpu.releaseHandle(.compute_pass_encoder, pass_encoder);
         }
-        webutils.log("DEBUG: renderFrame: Advance Particles Complete. Final positions for this frame in '" ++ (self.current_particle_buffer.label orelse "-") ++ "' ('" ++ (if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB") ++ "')."); // Adjusted log
+        webutils.log("DEBUG: renderFrame: Advance Particles Complete. Final positions for this frame in '" ++ (if (self.current_particle_buffer == self.particle_buffer_a) "pA" else "pB") ++ "')."); // Adjusted log
 
         // --- 6. Render Passes ---
         // Render particles to HDR texture
-        webutils.log("DEBUG: renderFrame: Starting HDR Render Pass. Source particles from '" ++ (self.current_particle_buffer.label orelse "-") ++ "' ('" ++ (if (self.current_particle_buffer.handle == self.particle_buffer_a.handle) "pA" else "pB") ++ "')."); // Adjusted log
+        webutils.log("DEBUG: renderFrame: Starting HDR Render Pass. Source particles from '" ++ (if (self.current_particle_buffer == self.particle_buffer_a) "pA" else "pB") ++ "')."); // Adjusted log
         {
             const color_attachment = webgpu.RenderPassColorAttachment{
                 .view = self.hdr_texture_view, // Target the HDR texture
@@ -1298,12 +1369,12 @@ pub const Renderer = struct {
             });
 
             // Determine which particle_read_only_bg to use
-            const particle_render_bg = if (self.current_particle_buffer.handle == self.particle_buffer_a.handle)
+            const particle_render_bg = if (self.current_particle_buffer == self.particle_buffer_a)
                 self.particle_read_only_bg_a
             else
                 self.particle_read_only_bg_b;
 
-            webutils.log("DEBUG: HDR Render Pass: Using particle BG '" ++ (particle_render_bg.label orelse "-") ++ "'."); // Adjusted log
+            webutils.log("DEBUG: HDR Render Pass: Using particle BG '" ++ (if (particle_render_bg == self.particle_read_only_bg_a) "read_only_a" else "read_only_b") ++ "'."); // Adjusted log
 
             // Using particle_render_circle_pipeline as an example.
             // TODO: Add logic to select between glow, circle, point pipelines based on settings.
@@ -1313,7 +1384,7 @@ pub const Renderer = struct {
             pass_encoder.draw(6, self.particle_count, 0, 0); // Draw 6 vertices (quad) per particle, instanced
 
             pass_encoder.end();
-            webgpu.releaseHandle(pass_encoder.handle, .RenderPassEncoder); // Release render pass encoder
+            webgpu.releaseHandle(.render_pass_encoder, pass_encoder); // Release render pass encoder
         }
         webutils.log("DEBUG: renderFrame: HDR Render Pass Complete. Output to hdr_texture_view."); // Adjusted log
 
@@ -1338,7 +1409,7 @@ pub const Renderer = struct {
         //     compose_pass_encoder.setBindGroup(0, self.compose_bg, &.{}); // Contains hdr_texture_view and blue_noise_texture_view
         //     compose_pass_encoder.draw(6, 1, 0, 0); // Draw a full-screen quad
         //     compose_pass_encoder.end();
-        //     webgpu.releaseHandle(compose_pass_encoder.handle, .RenderPassEncoder);
+        //     webgpu.releaseHandle(.render_pass_encoder, compose_pass_encoder);
         // }
 
         // --- Finish and Submit ---
@@ -1346,13 +1417,13 @@ pub const Renderer = struct {
             .label = "main_frame_command_buffer",
         }) catch |err_finish| {
             webutils.log("ERROR: Failed to finish command encoder: " ++ @errorName(err_finish)); // Adjusted log
-            webgpu.releaseHandle(encoder.handle, .CommandEncoder); // Release encoder on finish error
+            webgpu.releaseHandle(.command_encoder, encoder); // Release encoder on finish error
             return RendererError.CommandBufferCreationError;
         };
-        webgpu.releaseHandle(encoder.handle, .CommandEncoder); // Encoder is consumed by finish, release its handle reference
+        webgpu.releaseHandle(.command_encoder, encoder); // Encoder is consumed by finish, release its handle reference
 
-        queue.submit(&.{command_buffer});
-        webgpu.releaseHandle(command_buffer.handle, .CommandBuffer); // Release command buffer after submit (Zig owns, JS side handle can be released)
+        try queue.submit(&.{command_buffer});
+        webgpu.releaseHandle(.command_buffer, command_buffer); // Release command buffer after submit (Zig owns, JS side handle can be released)
         webutils.log("INFO: renderFrame: Frame commands submitted successfully."); // Adjusted log
     }
 };

@@ -148,7 +148,7 @@ pub export fn _wasm_shutdown() void {
     // Deinitialize the main allocator if it was initialized
     if (g_main_allocator != null) {
         webutils.log("Deinitializing main allocator (GPA)...");
-        g_gpa_instance.deinit(); // Deinit the GPA instance itself
+        _ = g_gpa_instance.deinit(); // Deinit the GPA instance itself
         g_main_allocator = null;
         webutils.log("Main allocator deinitialized.");
     }
