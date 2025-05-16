@@ -175,14 +175,14 @@ This section tracks the completion status of the items outlined above.
     3.  **Implement JS FFI Functions (`src/js/webgpu.js`):**
         *   Initialization (Adapter, Device, Queue): **DONE**
         *   Resource Creation (`createBuffer`, `createShaderModule`, `createTexture`, `textureCreateView`): **DONE**. `createSampler`: *PENDING*.
-        *   Pipeline Creation (`createBindGroupLayout`): **DONE**. `createPipelineLayout`, `createRenderPipelineAsync`, `createComputePipelineAsync`: *PENDING*.
+        *   Pipeline Creation (`createBindGroupLayout`, `createPipelineLayout`, `createComputePipeline`): **DONE**. `createRenderPipeline`: **DONE**.
         *   Bind Group Creation (`createBindGroup`): **DONE**.
-        *   Command Encoding: *PENDING* (Methods for render/compute pass encoders like `setPipeline`, `setBindGroup`, `setVertexBuffer`, `setIndexBuffer`, `draw`, `drawIndexed`, `dispatchWorkgroups`, `end`).
-        *   Command Buffer (`commandEncoderFinish`): *PENDING*.
-        *   Queue Operations (`queueWriteBuffer`, `queueSubmit`): **DONE**. `queueWriteTexture`: *PENDING*.
-        *   Handle Management (`releaseHandle`): **DONE**.
+        *   Command Encoding: `createCommandEncoder`, `beginComputePass`, `computePassEncoder.setPipeline`, `computePassEncoder.setBindGroup`, `computePassEncoder.dispatchWorkgroups`, `computePassEncoder.dispatchWorkgroupsIndirect`, `computePassEncoder.endPass`: **DONE**. `beginRenderPass` and its methods: *PENDING*.
+        *   Command Buffer (`commandEncoder.finish()`): *PENDING*.
+        *   Queue Operations (`queueWriteBuffer`): **DONE**. `queueSubmit`, `queueWriteTexture`, `queueCopyExternalImageToTexture`, `queueOnSubmittedWorkDone`: *PENDING*.
+        *   Handle Management (`releaseHandle`): **DONE** (updated for new handle types).
         *   Error Handling (`getAndLogWebGPUError` mechanism): **DONE**. (JS side `readBindGroupLayoutDescriptorFromMemory` also updated).
-    4.  **Implement Zig Externs and Wrappers (`src/webgpu.zig`):** **DONE** for implemented JS functions. Zig FFI wrappers include logging and error handling.
+    4.  **Implement Zig Externs and Wrappers (`src/webgpu.zig`):** **DONE** for implemented JS functions (including command encoder and compute pass). Zig FFI wrappers include logging and error handling.
     5.  **Testing (Basic):** **DONE** (through iterative demo development and fixing compilation errors).
 
 **Phase 2: Develop Particle Simulator Demo**
@@ -197,8 +197,8 @@ This section tracks the completion status of the items outlined above.
         *   Shader Modules (creation via FFI): **DONE**.
         *   Bind Group Layouts (creation via FFI, `BindGroupLayoutEntry` initialization updated): **DONE**.
         *   Bind Groups (creation via FFI): **DONE**.
-        *   Pipeline Creation: *In Progress (Partially blocked by FFI for `PipelineLayout`, `RenderPipeline`, `ComputePipeline`). Work on command recording functions using FFI is ongoing.*
-        *   Render Loop (`renderFrame` function): *In Progress (significant changes to use free-function FFI calls for resource creation and command recording; `try` added to queue operations).*
+        *   Pipeline Creation: *In Progress (Partially blocked by FFI for `RenderPipeline`). Work on command recording functions using FFI is ongoing.*
+        *   Render Loop (`renderFrame` function): *In Progress (significant changes to use free-function FFI calls for resource creation and command recording; `try` added to queue operations).* Commands for compute passes are now being added.
     5.  **Implement `simulation.zig` and `main.zig`:**
         *   `simulation.zig`: *In Progress* (particle data generation with `random.DefaultPrng`).
         *   `main.zig`: *In Progress* (driving compilation, basic structure, `std` usage reduction ongoing).

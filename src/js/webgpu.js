@@ -11,6 +11,13 @@ const globalWebGPU = {
     textureViews: [null], // Added for GPUTextureView handles
     bindGroupLayouts: [null], // Added for GPUBindGroupLayout handles
     bindGroups: {}, // Added for BindGroup
+    pipelineLayouts: [null], // Added for GPUPipelineLayout handles
+    computePipelines: [null], // Added for GPUComputePipeline handles
+    renderPipelines: [null], // Added for GPURenderPipeline handles
+    commandEncoders: [null], // Added for GPUCommandEncoder handles
+    computePassEncoders: [null], // Added for GPUComputePassEncoder handles
+    renderPassEncoders: [null], // Added for GPURenderPassEncoder handles
+    querySets: [null], // Added for GPUQuerySet handles
     error: null,      // To store the last error message
     wasmExports: null, // To store Wasm exports like zig_receive_adapter
     memory: null, // To store Wasm memory
@@ -88,6 +95,41 @@ function storeBindGroupLayout(bgl) {
 function storeBindGroup(bindGroup) {
     const handle = globalWebGPU.nextHandle++;
     globalWebGPU.bindGroups[handle] = bindGroup;
+    return handle;
+}
+
+function storePipelineLayout(pipelineLayout) {
+    if (!pipelineLayout) return 0;
+    const handle = globalWebGPU.pipelineLayouts.length; // Assuming globalWebGPU.pipelineLayouts exists
+    globalWebGPU.pipelineLayouts.push(pipelineLayout);
+    return handle;
+}
+
+function storeComputePipeline(pipeline) {
+    if (!pipeline) return 0;
+    const handle = globalWebGPU.computePipelines.length;
+    globalWebGPU.computePipelines.push(pipeline);
+    return handle;
+}
+
+function storeRenderPipeline(pipeline) {
+    if (!pipeline) return 0;
+    const handle = globalWebGPU.renderPipelines.length;
+    globalWebGPU.renderPipelines.push(pipeline);
+    return handle;
+}
+
+function storeCommandEncoder(encoder) {
+    if (!encoder) return 0;
+    const handle = globalWebGPU.commandEncoders.length;
+    globalWebGPU.commandEncoders.push(encoder);
+    return handle;
+}
+
+function storeComputePassEncoder(pass) {
+    if (!pass) return 0;
+    const handle = globalWebGPU.computePassEncoders.length;
+    globalWebGPU.computePassEncoders.push(pass);
     return handle;
 }
 
@@ -262,6 +304,11 @@ export const webGPUNativeImports = {
             case 8: if (handle > 0 && handle < globalWebGPU.textureViews.length) globalWebGPU.textureViews[handle] = null; break;
             case 10: if (handle > 0 && handle < globalWebGPU.bindGroupLayouts.length) globalWebGPU.bindGroupLayouts[handle] = null; break;
             case 11: if (handle > 0 && handle < globalWebGPU.bindGroups.length) globalWebGPU.bindGroups[handle] = null; break;
+            case 12: if (handle > 0 && handle < globalWebGPU.pipelineLayouts.length) globalWebGPU.pipelineLayouts[handle] = null; break;
+            case 13: if (handle > 0 && handle < globalWebGPU.computePipelines.length) globalWebGPU.computePipelines[handle] = null; break;
+            case 14: if (handle > 0 && handle < globalWebGPU.renderPipelines.length) globalWebGPU.renderPipelines[handle] = null; break;
+            case 15: if (handle > 0 && handle < globalWebGPU.commandEncoders.length) globalWebGPU.commandEncoders[handle] = null; break;
+            case 17: if (handle > 0 && handle < globalWebGPU.computePassEncoders.length) globalWebGPU.computePassEncoders[handle] = null; break;
             default: console.warn(`[webgpu.js] Unknown type_id for release_handle: ${type_id}`);
         }
     },
@@ -651,6 +698,476 @@ export const webGPUNativeImports = {
         }
     },
 
+    env_wgpu_device_create_pipeline_layout_js: function(device_handle, descriptor_ptr) {
+        try {
+            const device = globalWebGPU.devices[device_handle];
+            if (!device) {
+                return recordError(`Device not found for handle: ${device_handle}`);
+            }
+
+            const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
+            let offset_u32 = descriptor_ptr / 4;
+
+            const label_ptr = wasmMemoryU32[offset_u32++];
+            const bind_group_layouts_ptr = wasmMemoryU32[offset_u32++];
+            const bind_group_layouts_len = wasmMemoryU32[offset_u32++];
+
+            const jsDescriptor = {};
+            if (label_ptr) {
+                jsDescriptor.label = readStringFromMemory(label_ptr);
+            }
+
+            jsDescriptor.bindGroupLayouts = [];
+            let current_bgl_handle_ptr_u32 = bind_group_layouts_ptr / 4;
+            for (let i = 0; i < bind_group_layouts_len; i++) {
+                const bgl_handle = wasmMemoryU32[current_bgl_handle_ptr_u32++];
+                const bgl = globalWebGPU.bindGroupLayouts[bgl_handle];
+                if (!bgl) {
+                    return recordError(`BindGroupLayout not found for handle: ${bgl_handle} at index ${i}`);
+                }
+                jsDescriptor.bindGroupLayouts.push(bgl);
+            }
+
+            const pipelineLayout = device.createPipelineLayout(jsDescriptor);
+            const plHandle = storePipelineLayout(pipelineLayout);
+            return plHandle;
+        } catch (e) {
+            return recordError(e.message);
+        }
+    },
+
+    env_wgpu_device_create_compute_pipeline_js: function(device_handle, descriptor_ptr) {
+        try {
+            const device = globalWebGPU.devices[device_handle];
+            if (!device) {
+                return recordError(`Device not found for handle: ${device_handle}`);
+            }
+
+            const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
+            const wasmMemoryF64 = new Float64Array(globalWebGPU.wasmMemory.buffer);
+            let offset_u32 = descriptor_ptr / 4;
+
+            const jsDescriptor = {};
+
+            // Read ComputePipelineDescriptor
+            const label_ptr = wasmMemoryU32[offset_u32++];
+            const layout_handle = wasmMemoryU32[offset_u32++]; // This is actually ?PipelineLayout, so 0 means null/auto
+            // Next is compute: ProgrammableStageDescriptor (module_handle, entry_point_ptr, constants_ptr, constants_len)
+            const compute_module_handle = wasmMemoryU32[offset_u32++];
+            const compute_entry_point_ptr = wasmMemoryU32[offset_u32++];
+            const compute_constants_ptr = wasmMemoryU32[offset_u32++];
+            const compute_constants_len = wasmMemoryU32[offset_u32++];
+
+            if (label_ptr) {
+                jsDescriptor.label = readStringFromMemory(label_ptr);
+            }
+
+            if (layout_handle !== 0) { // 0 is the sentinel for null PipelineLayout (auto)
+                jsDescriptor.layout = globalWebGPU.pipelineLayouts[layout_handle];
+                if (!jsDescriptor.layout) {
+                    return recordError(`PipelineLayout not found for handle: ${layout_handle}`);
+                }
+            } else {
+                jsDescriptor.layout = 'auto';
+            }
+
+            jsDescriptor.compute = {};
+            jsDescriptor.compute.module = globalWebGPU.shaderModules[compute_module_handle];
+            if (!jsDescriptor.compute.module) {
+                return recordError(`ShaderModule not found for compute stage handle: ${compute_module_handle}`);
+            }
+
+            if (compute_entry_point_ptr) {
+                jsDescriptor.compute.entryPoint = readStringFromMemory(compute_entry_point_ptr);
+            }
+
+            if (compute_constants_len > 0 && compute_constants_ptr) {
+                jsDescriptor.compute.constants = {};
+                let constant_offset_bytes = compute_constants_ptr;
+                for (let i = 0; i < compute_constants_len; i++) {
+                    // ConstantEntry: key_ptr (u32), value (f64)
+                    // Need to be careful with memory alignment for f64
+                    const key_ptr_for_constant = wasmMemoryU32[constant_offset_bytes / 4];
+                    const value_for_constant = wasmMemoryF64[(constant_offset_bytes + 4) / 8]; 
+                    jsDescriptor.compute.constants[readStringFromMemory(key_ptr_for_constant)] = value_for_constant;
+                    constant_offset_bytes += 12; // sizeof(ConstantEntry)
+                }
+            }
+
+            const computePipeline = device.createComputePipeline(jsDescriptor);
+            const cpHandle = storeComputePipeline(computePipeline);
+            return cpHandle;
+        } catch (e) {
+            return recordError(e.message);
+        }
+    },
+
+    env_wgpu_device_create_render_pipeline_js: function(device_handle, descriptor_ptr) {
+        try {
+            const device = globalWebGPU.devices[device_handle];
+            if (!device) {
+                return recordError(`Device not found for handle: ${device_handle}`);
+            }
+
+            const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
+            const wasmMemoryF64 = new Float64Array(globalWebGPU.wasmMemory.buffer);
+            const wasmMemoryI32 = new Int32Array(globalWebGPU.wasmMemory.buffer);
+            const wasmMemoryF32 = new Float32Array(globalWebGPU.wasmMemory.buffer);
+            let descriptor_offset_u32 = descriptor_ptr / 4;
+
+            // Helper function to read ProgrammableStageDescriptor (used by compute and vertex/fragment stages)
+            function readProgrammableStage(base_ptr_u32) {
+                let offset = base_ptr_u32;
+                const module_handle = wasmMemoryU32[offset++];
+                const entry_point_ptr = wasmMemoryU32[offset++];
+                const constants_ptr = wasmMemoryU32[offset++];
+                const constants_len = wasmMemoryU32[offset++];
+
+                const stage = {};
+                stage.module = globalWebGPU.shaderModules[module_handle];
+                if (!stage.module) {
+                    recordError(`ShaderModule not found for stage handle: ${module_handle}`);
+                    return null;
+                }
+                if (entry_point_ptr) {
+                    stage.entryPoint = readStringFromMemory(entry_point_ptr);
+                }
+                if (constants_len > 0 && constants_ptr) {
+                    stage.constants = {};
+                    let constant_offset_bytes = constants_ptr;
+                    for (let i = 0; i < constants_len; i++) {
+                        const key_ptr_for_constant = wasmMemoryU32[constant_offset_bytes / 4];
+                        const value_for_constant = wasmMemoryF64[(constant_offset_bytes + 4) / 8]; 
+                        stage.constants[readStringFromMemory(key_ptr_for_constant)] = value_for_constant;
+                        constant_offset_bytes += 12; // sizeof(ConstantEntry)
+                    }
+                }
+                return stage;
+            }
+
+            const jsDescriptor = {};
+
+            // Read RenderPipelineDescriptor
+            const label_ptr = wasmMemoryU32[descriptor_offset_u32++];
+            const layout_handle = wasmMemoryU32[descriptor_offset_u32++]; // ?PipelineLayout
+            // vertex: VertexState (ProgrammableStage + buffers)
+            const vertex_stage_ptr_u32 = descriptor_offset_u32;
+            jsDescriptor.vertex = readProgrammableStage(vertex_stage_ptr_u32);
+            if (!jsDescriptor.vertex) return 0; // Error already recorded
+            descriptor_offset_u32 += 4; // Advance past ProgrammableStage part of VertexState (module, entry_point, constants_ptr, constants_len)
+            
+            const vertex_buffers_ptr = wasmMemoryU32[descriptor_offset_u32++];
+            const vertex_buffers_len = wasmMemoryU32[descriptor_offset_u32++];
+            if (vertex_buffers_len > 0 && vertex_buffers_ptr) {
+                jsDescriptor.vertex.buffers = [];
+                let vb_layout_offset_bytes = vertex_buffers_ptr;
+                for (let i = 0; i < vertex_buffers_len; i++) {
+                    const jsVbLayout = {};
+                    jsVbLayout.arrayStride = Number(wasmMemoryU64[vb_layout_offset_bytes / 8]);
+                    jsVbLayout.stepMode = ZIG_VERTEX_STEP_MODE_TO_JS[wasmMemoryU32[(vb_layout_offset_bytes + 8) / 4]];
+                    const attributes_ptr = wasmMemoryU32[(vb_layout_offset_bytes + 12) / 4];
+                    const attributes_len = wasmMemoryU32[(vb_layout_offset_bytes + 16) / 4];
+                    jsVbLayout.attributes = [];
+                    if (attributes_len > 0 && attributes_ptr) {
+                        let attr_offset_bytes = attributes_ptr;
+                        for (let j = 0; j < attributes_len; j++) {
+                            jsVbLayout.attributes.push({
+                                format: ZIG_VERTEX_FORMAT_TO_JS[wasmMemoryU32[attr_offset_bytes / 4]],
+                                offset: Number(wasmMemoryU64[(attr_offset_bytes + 4) / 8]), // format u32, offset u64
+                                shaderLocation: wasmMemoryU32[(attr_offset_bytes + 12) / 4], // after offset u64
+                            });
+                            attr_offset_bytes += 16; // sizeof(VertexAttribute): format(u32), offset(u64), shader_location(u32) = 4+8+4 = 16
+                        }
+                    }
+                    jsDescriptor.vertex.buffers.push(jsVbLayout);
+                    vb_layout_offset_bytes += 20; // sizeof(VertexBufferLayout): array_stride(u64), step_mode(u32), attributes_ptr(u32), attributes_len(u32) = 8+4+4+4 = 20
+                }
+            }
+
+            // primitive: PrimitiveState (topology, strip_index_format, front_face, cull_mode)
+            jsDescriptor.primitive = {};
+            jsDescriptor.primitive.topology = ZIG_PRIMITIVE_TOPOLOGY_TO_JS[wasmMemoryU32[descriptor_offset_u32++]];
+            const strip_index_format_val = wasmMemoryU32[descriptor_offset_u32++]; // This is ?GPUIndexFormat
+            if (strip_index_format_val !== 0xFFFFFFFF) { // Assuming Zig sends a sentinel for null, e.g., u32.max
+                jsDescriptor.primitive.stripIndexFormat = ZIG_INDEX_FORMAT_TO_JS[strip_index_format_val];
+            }
+            jsDescriptor.primitive.frontFace = ZIG_FRONT_FACE_TO_JS[wasmMemoryU32[descriptor_offset_u32++]];
+            jsDescriptor.primitive.cullMode = ZIG_CULL_MODE_TO_JS[wasmMemoryU32[descriptor_offset_u32++]];
+            // unclippedDepth is skipped for now
+
+            // depth_stencil: ?*const DepthStencilState
+            const depth_stencil_ptr = wasmMemoryU32[descriptor_offset_u32++];
+            if (depth_stencil_ptr) {
+                jsDescriptor.depthStencil = {};
+                let ds_offset_u32 = depth_stencil_ptr / 4;
+                jsDescriptor.depthStencil.format = mapTextureFormatZigToJs(wasmMemoryU32[ds_offset_u32++]);
+                jsDescriptor.depthStencil.depthWriteEnabled = wasmMemoryU32[ds_offset_u32++] !== 0; // bool
+                jsDescriptor.depthStencil.depthCompare = ZIG_COMPARE_FUNCTION_TO_JS[wasmMemoryU32[ds_offset_u32++]];
+                // StencilFaceState: front and back (compare, failOp, depthFailOp, passOp)
+                function readStencilFaceState(sfs_offset_u32) {
+                    return {
+                        compare: ZIG_COMPARE_FUNCTION_TO_JS[wasmMemoryU32[sfs_offset_u32++]],
+                        failOp: ZIG_STENCIL_OP_TO_JS[wasmMemoryU32[sfs_offset_u32++]],
+                        depthFailOp: ZIG_STENCIL_OP_TO_JS[wasmMemoryU32[sfs_offset_u32++]],
+                        passOp: ZIG_STENCIL_OP_TO_JS[wasmMemoryU32[sfs_offset_u32++]],
+                    };
+                }
+                jsDescriptor.depthStencil.stencilFront = readStencilFaceState(ds_offset_u32); ds_offset_u32 += 4;
+                jsDescriptor.depthStencil.stencilBack = readStencilFaceState(ds_offset_u32); ds_offset_u32 += 4;
+                jsDescriptor.depthStencil.stencilReadMask = wasmMemoryU32[ds_offset_u32++];
+                jsDescriptor.depthStencil.stencilWriteMask = wasmMemoryU32[ds_offset_u32++];
+                jsDescriptor.depthStencil.depthBias = wasmMemoryI32[ds_offset_u32++];
+                jsDescriptor.depthStencil.depthBiasSlopeScale = wasmMemoryF32[ds_offset_u32++];
+                jsDescriptor.depthStencil.depthBiasClamp = wasmMemoryF32[ds_offset_u32++];
+            }
+
+            // multisample: MultisampleState (count, mask, alphaToCoverageEnabled)
+            jsDescriptor.multisample = {};
+            jsDescriptor.multisample.count = wasmMemoryU32[descriptor_offset_u32++];
+            jsDescriptor.multisample.mask = wasmMemoryU32[descriptor_offset_u32++];
+            jsDescriptor.multisample.alphaToCoverageEnabled = wasmMemoryU32[descriptor_offset_u32++] !== 0;
+
+            // fragment: ?*const FragmentState
+            const fragment_ptr = wasmMemoryU32[descriptor_offset_u32++];
+            if (fragment_ptr) {
+                let frag_stage_base_u32 = fragment_ptr / 4;
+                jsDescriptor.fragment = readProgrammableStage(frag_stage_base_u32);
+                if (!jsDescriptor.fragment) return 0; // Error recorded
+                frag_stage_base_u32 += 4; // Advance past ProgrammableStage part
+
+                const targets_ptr = wasmMemoryU32[frag_stage_base_u32++];
+                const targets_len = wasmMemoryU32[frag_stage_base_u32++];
+                jsDescriptor.fragment.targets = [];
+                if (targets_len > 0 && targets_ptr) {
+                    let target_offset_bytes = targets_ptr;
+                    for (let i = 0; i < targets_len; i++) {
+                        const jsTarget = {};
+                        let ct_offset_u32 = target_offset_bytes / 4;
+                        jsTarget.format = mapTextureFormatZigToJs(wasmMemoryU32[ct_offset_u32++]);
+                        const blend_ptr = wasmMemoryU32[ct_offset_u32++]; // ?*const BlendState
+                        if (blend_ptr) {
+                            jsTarget.blend = {};
+                            let blend_offset_u32 = blend_ptr / 4;
+                            // color: BlendComponent
+                            jsTarget.blend.color = {
+                                operation: ZIG_BLEND_OP_TO_JS[wasmMemoryU32[blend_offset_u32++]],
+                                srcFactor: ZIG_BLEND_FACTOR_TO_JS[wasmMemoryU32[blend_offset_u32++]],
+                                dstFactor: ZIG_BLEND_FACTOR_TO_JS[wasmMemoryU32[blend_offset_u32++]],
+                            };
+                            // alpha: BlendComponent
+                            jsTarget.blend.alpha = {
+                                operation: ZIG_BLEND_OP_TO_JS[wasmMemoryU32[blend_offset_u32++]],
+                                srcFactor: ZIG_BLEND_FACTOR_TO_JS[wasmMemoryU32[blend_offset_u32++]],
+                                dstFactor: ZIG_BLEND_FACTOR_TO_JS[wasmMemoryU32[blend_offset_u32++]],
+                            };
+                        }
+                        jsTarget.writeMask = wasmMemoryU32[ct_offset_u32++];
+                        jsDescriptor.fragment.targets.push(jsTarget);
+                        target_offset_bytes += 12; // sizeof(ColorTargetState): format(u32), blend_ptr(u32), write_mask(u32) = 12
+                    }
+                }
+            }
+
+            if (label_ptr) {
+                jsDescriptor.label = readStringFromMemory(label_ptr);
+            }
+            if (layout_handle !== 0) {
+                jsDescriptor.layout = globalWebGPU.pipelineLayouts[layout_handle];
+                if (!jsDescriptor.layout) return recordError(`PipelineLayout not found: ${layout_handle}`);
+            } else {
+                jsDescriptor.layout = 'auto';
+            }
+
+            const renderPipeline = device.createRenderPipeline(jsDescriptor);
+            const rpHandle = storeRenderPipeline(renderPipeline);
+            return rpHandle;
+        } catch (e) {
+            return recordError(e.message);
+        }
+    },
+
+    env_wgpu_device_create_command_encoder_js: function(device_handle, descriptor_ptr) {
+        try {
+            const device = globalWebGPU.devices[device_handle];
+            if (!device) {
+                return recordError(`Device not found for handle: ${device_handle}`);
+            }
+            
+            let jsDescriptor = undefined;
+            if (descriptor_ptr) {
+                // Assuming CommandEncoderDescriptor has only a label for now.
+                // struct CommandEncoderDescriptor { label: ?[*:0]const u8 = null }
+                const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
+                const label_ptr = wasmMemoryU32[descriptor_ptr / 4]; // Read the pointer to the label string
+                if (label_ptr) {
+                    jsDescriptor = { label: readStringFromMemory(label_ptr) };
+                }
+            }
+            const encoder = device.createCommandEncoder(jsDescriptor);
+            return storeCommandEncoder(encoder);
+        } catch (e) {
+            return recordError(e.message);
+        }
+    },
+
+    env_wgpu_command_encoder_copy_buffer_to_buffer_js: function(encoder_handle, source_buffer_handle, source_offset_low, source_offset_high, destination_buffer_handle, destination_offset_low, destination_offset_high, size_low, size_high) {
+        try {
+            const encoder = globalWebGPU.commandEncoders[encoder_handle];
+            if (!encoder) return recordError(`CommandEncoder not found: ${encoder_handle}`);
+            const sourceBuffer = globalWebGPU.buffers[source_buffer_handle];
+            if (!sourceBuffer) return recordError(`Source Buffer not found: ${source_buffer_handle}`);
+            const destinationBuffer = globalWebGPU.buffers[destination_buffer_handle];
+            if (!destinationBuffer) return recordError(`Destination Buffer not found: ${destination_buffer_handle}`);
+
+            const sourceOffset = combineToBigInt(source_offset_low, source_offset_high);
+            const destinationOffset = combineToBigInt(destination_offset_low, destination_offset_high);
+            const size = combineToBigInt(size_low, size_high);
+
+            encoder.copyBufferToBuffer(
+                sourceBuffer, Number(sourceOffset), 
+                destinationBuffer, Number(destinationOffset), 
+                Number(size)
+            );
+        } catch (e) {
+            recordError(e.message); // Errors in void functions are recorded for Zig to check later if desired
+        }
+    },
+
+    env_wgpu_command_encoder_begin_compute_pass_js: function(encoder_handle, descriptor_ptr) {
+        try {
+            const encoder = globalWebGPU.commandEncoders[encoder_handle];
+            if (!encoder) return recordError(`CommandEncoder not found: ${encoder_handle}`);
+
+            let jsDescriptor = undefined;
+            if (descriptor_ptr) {
+                jsDescriptor = {};
+                const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
+                let offset_u32 = descriptor_ptr / 4;
+
+                const label_ptr = wasmMemoryU32[offset_u32++];
+                if (label_ptr) jsDescriptor.label = readStringFromMemory(label_ptr);
+
+                const timestamp_writes_ptr = wasmMemoryU32[offset_u32++];
+                const timestamp_writes_len = wasmMemoryU32[offset_u32++];
+
+                if (timestamp_writes_len > 0 && timestamp_writes_ptr) {
+                    jsDescriptor.timestampWrites = [];
+                    let ts_write_offset_u32 = timestamp_writes_ptr / 4;
+                    for (let i = 0; i < timestamp_writes_len; i++) {
+                        const query_set_handle = wasmMemoryU32[ts_write_offset_u32++];
+                        const query_index = wasmMemoryU32[ts_write_offset_u32++];
+                        const location_enum_val = wasmMemoryU32[ts_write_offset_u32++];
+                        
+                        const querySet = globalWebGPU.querySets[query_set_handle]; // Assuming querySets array exists
+                        if (!querySet) return recordError(`QuerySet not found: ${query_set_handle}`);
+
+                        jsDescriptor.timestampWrites.push({
+                            querySet: querySet,
+                            queryIndex: query_index,
+                            location: location_enum_val === 0 ? "beginning" : "end",
+                        });
+                    }
+                }
+            }
+            const pass = encoder.beginComputePass(jsDescriptor);
+            return storeComputePassEncoder(pass);
+        } catch (e) {
+            return recordError(e.message);
+        }
+    },
+
+    env_wgpu_compute_pass_encoder_set_pipeline_js: function(pass_handle, pipeline_handle) {
+        try {
+            const pass = globalWebGPU.computePassEncoders[pass_handle];
+            if (!pass) return recordError(`ComputePassEncoder not found: ${pass_handle}`);
+            const pipeline = globalWebGPU.computePipelines[pipeline_handle];
+            if (!pipeline) return recordError(`ComputePipeline not found: ${pipeline_handle}`);
+            pass.setPipeline(pipeline);
+        } catch (e) {
+            recordError(e.message);
+        }
+    },
+
+    env_wgpu_compute_pass_encoder_set_bind_group_js: function(pass_handle, index, bind_group_handle, dynamic_offsets_data_ptr, dynamic_offsets_data_start, dynamic_offsets_data_length) {
+        try {
+            const pass = globalWebGPU.computePassEncoders[pass_handle];
+            if (!pass) return recordError(`ComputePassEncoder not found: ${pass_handle}`);
+            const bindGroup = globalWebGPU.bindGroups[bind_group_handle]; // bindGroups is an object
+            if (!bindGroup) return recordError(`BindGroup not found: ${bind_group_handle}`);
+
+            if (dynamic_offsets_data_ptr && dynamic_offsets_data_length > 0) {
+                const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
+                // dynamic_offsets_data_start is likely 0 if ptr is base of a new array from Zig for just these offsets.
+                // It is specified in bytes by some specs or element count by others. Here it is element count into wasmMemoryU32.
+                // Let's assume dynamic_offsets_data_ptr is the actual pointer to the data in wasm memory.
+                const offsets = wasmMemoryU32.subarray(dynamic_offsets_data_ptr / 4, dynamic_offsets_data_ptr / 4 + dynamic_offsets_data_length);
+                pass.setBindGroup(index, bindGroup, offsets);
+            } else {
+                pass.setBindGroup(index, bindGroup);
+            }
+        } catch (e) {
+            recordError(e.message);
+        }
+    },
+
+    env_wgpu_compute_pass_encoder_dispatch_workgroups_js: function(pass_handle, workgroup_count_x, workgroup_count_y, workgroup_count_z) {
+        try {
+            const pass = globalWebGPU.computePassEncoders[pass_handle];
+            if (!pass) return recordError(`ComputePassEncoder not found: ${pass_handle}`);
+            pass.dispatchWorkgroups(workgroup_count_x, workgroup_count_y, workgroup_count_z);
+        } catch (e) {
+            recordError(e.message);
+        }
+    },
+
+    env_wgpu_compute_pass_encoder_dispatch_workgroups_indirect_js: function(pass_handle, indirect_buffer_handle, indirect_offset_low, indirect_offset_high) {
+        try {
+            const pass = globalWebGPU.computePassEncoders[pass_handle];
+            if (!pass) return recordError(`ComputePassEncoder not found: ${pass_handle}`);
+            const indirectBuffer = globalWebGPU.buffers[indirect_buffer_handle];
+            if (!indirectBuffer) return recordError(`Indirect buffer not found: ${indirect_buffer_handle}`);
+            const indirectOffset = combineToBigInt(indirect_offset_low, indirect_offset_high);
+            pass.dispatchWorkgroupsIndirect(indirectBuffer, Number(indirectOffset));
+        } catch (e) {
+            recordError(e.message);
+        }
+    },
+    
+    env_wgpu_compute_pass_encoder_write_timestamp_js: function(pass_handle, query_set_handle, query_index) {
+        try {
+            const pass = globalWebGPU.computePassEncoders[pass_handle];
+            if (!pass) return recordError(`ComputePassEncoder not found: ${pass_handle}`);
+            const querySet = globalWebGPU.querySets[query_set_handle]; // Assuming querySets array exists
+            if (!querySet) return recordError(`QuerySet not found: ${query_set_handle}`);
+            
+            // The `particle_sim.html` uses timestampWrites in the descriptor.
+            // This explicit call is for completeness or if other use cases need it.
+            if (typeof pass.writeTimestamp === 'function') {
+                 pass.writeTimestamp(querySet, query_index);
+            } else {
+                console.warn("[webgpu.js] computePassEncoder.writeTimestamp not available or not called due to descriptor usage.")
+            }
+        } catch (e) {
+            recordError(e.message);
+        }
+    },
+
+    env_wgpu_compute_pass_encoder_end_js: function(pass_handle) {
+        try {
+            const pass = globalWebGPU.computePassEncoders[pass_handle];
+            if (!pass) return recordError(`ComputePassEncoder not found: ${pass_handle}`);
+            pass.end();
+            // Invalidate the handle on JS side as the pass is ended
+            if (pass_handle > 0 && pass_handle < globalWebGPU.computePassEncoders.length) {
+                globalWebGPU.computePassEncoders[pass_handle] = null;
+            }
+        } catch (e) {
+            recordError(e.message);
+        }
+    },
+
+    // Render Pass will go here
+
 };
 
 // --- Helper Mappings for Enum Zig -> JS ---
@@ -733,6 +1250,56 @@ const ZIG_TEXTURE_SAMPLE_TYPE_TO_JS = {
 function mapTextureSampleTypeZigToJs(zigValue) {
     return ZIG_TEXTURE_SAMPLE_TYPE_TO_JS[zigValue] || "float";
 }
+
+const ZIG_VERTEX_STEP_MODE_TO_JS = {
+    0: "vertex",
+    1: "instance",
+};
+
+const ZIG_VERTEX_FORMAT_TO_JS = {
+    0: "uint8x2", 1: "uint8x4", 2: "sint8x2", 3: "sint8x4", 4: "unorm8x2", 5: "unorm8x4",
+    6: "snorm8x2", 7: "snorm8x4", 8: "uint16x2", 9: "uint16x4", 10: "sint16x2", 11: "sint16x4",
+    12: "unorm16x2", 13: "unorm16x4", 14: "snorm16x2", 15: "snorm16x4", 16: "float16x2", 17: "float16x4",
+    18: "float32", 19: "float32x2", 20: "float32x3", 21: "float32x4",
+    22: "uint32", 23: "uint32x2", 24: "uint32x3", 25: "uint32x4",
+    26: "sint32", 27: "sint32x2", 28: "sint32x3", 29: "sint32x4",
+    // Add all other vertex formats as they are added to Zig enum
+};
+
+const ZIG_PRIMITIVE_TOPOLOGY_TO_JS = {
+    0: "point-list", 1: "line-list", 2: "line-strip", 3: "triangle-list", 4: "triangle-strip",
+};
+
+const ZIG_INDEX_FORMAT_TO_JS = {
+    0: "uint16", 1: "uint32",
+};
+
+const ZIG_FRONT_FACE_TO_JS = {
+    0: "ccw", 1: "cw",
+};
+
+const ZIG_CULL_MODE_TO_JS = {
+    0: "none", 1: "front", 2: "back",
+};
+
+const ZIG_COMPARE_FUNCTION_TO_JS = {
+    0: "never", 1: "less", 2: "equal", 3: "less-equal", 4: "greater", 5: "not-equal", 6: "greater-equal", 7: "always",
+};
+
+const ZIG_STENCIL_OP_TO_JS = {
+    0: "keep", 1: "zero", 2: "replace", 3: "invert", 4: "increment-clamp", 5: "decrement-clamp", 6: "increment-wrap", 7: "decrement-wrap",
+};
+
+const ZIG_BLEND_OP_TO_JS = {
+    0: "add", 1: "subtract", 2: "reverse-subtract", 3: "min", 4: "max",
+};
+
+const ZIG_BLEND_FACTOR_TO_JS = {
+    0: "zero", 1: "one", 2: "src", 3: "one-minus-src", 4: "src-alpha", 5: "one-minus-src-alpha", 
+    6: "dst", 7: "one-minus-dst", 8: "dst-alpha", 9: "one-minus-dst-alpha", 
+    10: "src-alpha-saturated", 11: "constant", 12: "one-minus-constant",
+};
+
 
 // It's important that wasmInstance is set on webGPUNativeImports after Wasm instantiation.
 // Example: webGPUNativeImports.wasmInstance = instance;
@@ -868,4 +1435,8 @@ function readTextureBindingLayoutFromMemory(layout_ptr) {
         viewDimension: mapTextureDimensionZigToJs(viewDimensionZig), 
         multisampled: multisampled,
     };
+}
+
+function combineToBigInt(low, high) {
+    return (BigInt(high) << 32n) | BigInt(low);
 }
