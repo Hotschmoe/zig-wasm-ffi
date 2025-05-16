@@ -385,65 +385,65 @@ pub const Renderer = struct {
         const prefix_sum_iterations_calc = ilog2Ceil_for_n_plus_1(bin_count_calc); // Use calculated bin_count here
         const prefix_sum_step_buffer_size = @sizeOf(u32) * prefix_sum_iterations_calc * 64; // *64 due to JS example structure, likely for uniform offset alignment per step
 
-        self.species_buffer = try device.createBuffer(&webgpu.BufferDescriptor{
+        self.species_buffer = try webgpu.deviceCreateBuffer(device, &webgpu.BufferDescriptor{
             .label = "species_buffer",
             .size = species_buffer_size,
-            .usage = webgpu.BufferUsage.STORAGE | webgpu.BufferUsage.COPY_DST,
-            .mapped_at_creation = false,
+            .usage = webgpu.GPUBufferUsage.STORAGE | webgpu.GPUBufferUsage.COPY_DST,
+            .mappedAtCreation = false,
         });
 
-        self.forces_buffer = try device.createBuffer(&webgpu.BufferDescriptor{
+        self.forces_buffer = try webgpu.deviceCreateBuffer(device, &webgpu.BufferDescriptor{
             .label = "forces_buffer",
             .size = forces_buffer_size,
-            .usage = webgpu.BufferUsage.STORAGE | webgpu.BufferUsage.COPY_DST,
-            .mapped_at_creation = false,
+            .usage = webgpu.GPUBufferUsage.STORAGE | webgpu.GPUBufferUsage.COPY_DST,
+            .mappedAtCreation = false,
         });
 
         self.particle_buffer_a = try device.createBuffer(&webgpu.BufferDescriptor{
             .label = "particle_buffer_a",
             .size = particle_buffer_size,
-            .usage = webgpu.BufferUsage.STORAGE | webgpu.BufferUsage.COPY_DST | webgpu.BufferUsage.COPY_SRC,
-            .mapped_at_creation = false,
+            .usage = webgpu.GPUBufferUsage.STORAGE | webgpu.GPUBufferUsage.COPY_DST | webgpu.GPUBufferUsage.COPY_SRC,
+            .mappedAtCreation = false,
         });
         self.particle_buffer_b = try device.createBuffer(&webgpu.BufferDescriptor{
             .label = "particle_buffer_b",
             .size = particle_buffer_size,
-            .usage = webgpu.BufferUsage.STORAGE | webgpu.BufferUsage.COPY_DST | webgpu.BufferUsage.COPY_SRC, // COPY_SRC if read back or for other copies
-            .mapped_at_creation = false,
+            .usage = webgpu.GPUBufferUsage.STORAGE | webgpu.GPUBufferUsage.COPY_DST | webgpu.GPUBufferUsage.COPY_SRC, // COPY_SRC if read back or for other copies
+            .mappedAtCreation = false,
         });
 
         self.bin_offset_buffer_a = try device.createBuffer(&webgpu.BufferDescriptor{
             .label = "bin_offset_buffer_a",
             .size = bin_offset_buffer_size,
-            .usage = webgpu.BufferUsage.STORAGE | webgpu.BufferUsage.COPY_SRC,
-            .mapped_at_creation = false,
+            .usage = webgpu.GPUBufferUsage.STORAGE | webgpu.GPUBufferUsage.COPY_SRC,
+            .mappedAtCreation = false,
         });
         self.bin_offset_buffer_b = try device.createBuffer(&webgpu.BufferDescriptor{
             .label = "bin_offset_buffer_b",
             .size = bin_offset_buffer_size,
-            .usage = webgpu.BufferUsage.STORAGE | webgpu.BufferUsage.COPY_SRC,
-            .mapped_at_creation = false,
+            .usage = webgpu.GPUBufferUsage.STORAGE | webgpu.GPUBufferUsage.COPY_SRC,
+            .mappedAtCreation = false,
         });
 
         self.bin_prefix_sum_step_size_buffer = try device.createBuffer(&webgpu.BufferDescriptor{
             .label = "bin_prefix_sum_step_size_buffer",
             .size = prefix_sum_step_buffer_size,
-            .usage = webgpu.BufferUsage.UNIFORM | webgpu.BufferUsage.COPY_DST,
-            .mapped_at_creation = false,
+            .usage = webgpu.GPUBufferUsage.UNIFORM | webgpu.GPUBufferUsage.COPY_DST,
+            .mappedAtCreation = false,
         });
 
         self.camera_buffer = try device.createBuffer(&webgpu.BufferDescriptor{
             .label = "camera_buffer",
             .size = @sizeOf(CameraUniforms),
-            .usage = webgpu.BufferUsage.UNIFORM | webgpu.BufferUsage.COPY_DST,
-            .mapped_at_creation = false,
+            .usage = webgpu.GPUBufferUsage.UNIFORM | webgpu.GPUBufferUsage.COPY_DST,
+            .mappedAtCreation = false,
         });
 
         self.simulation_options_buffer = try device.createBuffer(&webgpu.BufferDescriptor{
             .label = "simulation_options_buffer",
             .size = @sizeOf(SimulationOptionsUniforms),
-            .usage = webgpu.BufferUsage.UNIFORM | webgpu.BufferUsage.COPY_DST,
-            .mapped_at_creation = false,
+            .usage = webgpu.GPUBufferUsage.UNIFORM | webgpu.GPUBufferUsage.COPY_DST,
+            .mappedAtCreation = false,
         });
 
         // Initial data population

@@ -170,40 +170,38 @@ This section tracks the completion status of the items outlined above.
 *   **Guiding Principles:**
     *   Async Operations (JS-to-Zig callback): **DONE**
 *   **Steps:**
-    1.  **Expand Handle Definitions (`src/webgpu.zig`):** Mostly **DONE** (sufficient for current needs).
-    2.  **Define Descriptor Structs (`src/webgpu.zig`):** Largely **DONE** for `BufferDescriptor`, `ShaderModuleDescriptor`, `TextureDescriptor`, `TextureViewDescriptor`. Others like `BindGroupLayoutDescriptor`, `BindGroupDescriptor` are next.
-    3.  **Implement JS FFI Functions (`src/js/webgpu.js`):
+    1.  **Expand Handle Definitions (`src/webgpu.zig`):** **DONE**
+    2.  **Define Descriptor Structs (`src/webgpu.zig`):** **DONE** (Includes `BufferDescriptor`, `ShaderModuleDescriptor`, `TextureDescriptor`, `TextureViewDescriptor`, `BindGroupLayoutEntry`, `BindGroupLayoutDescriptor`, `BindGroupEntry`, `BindGroupDescriptor`).
+    3.  **Implement JS FFI Functions (`src/js/webgpu.js`):**
         *   Initialization (Adapter, Device, Queue): **DONE**
-        *   Resource Creation (`createBuffer`, `createShaderModule`): **DONE**. `createTexture`, `textureCreateView`: **DONE**.
-        *   Pipeline Creation (`createBindGroupLayout`): *PENDING*. `createPipelineLayout`, `createRenderPipelineAsync`, `createComputePipelineAsync`: *PENDING*.
-        *   Bind Group Creation (`createBindGroup`): *PENDING*
-        *   Command Encoding: *PENDING*
-        *   Command Buffer: *PENDING*
-        *   Queue Operations (`queueWriteBuffer`): **DONE**. `queueSubmit`, `queueWriteTexture`: *PENDING*.
-        *   Handle Management (`releaseHandle`): **DONE**
-        *   Error Handling (`getAndLogWebGPUError`): **DONE**
-    4.  **Implement Zig Externs and Wrappers (`src/webgpu.zig`):** Mostly **DONE** for the completed JS functions. Callback declarations **DONE**.
-    5.  **Testing (Basic):** Implicitly **DONE** through successful demo bring-up of initialization and resource creation.
+        *   Resource Creation (`createBuffer`, `createShaderModule`, `createTexture`, `textureCreateView`): **DONE**. `createSampler`: *PENDING*.
+        *   Pipeline Creation (`createBindGroupLayout`): **DONE**. `createPipelineLayout`, `createRenderPipelineAsync`, `createComputePipelineAsync`: *PENDING*.
+        *   Bind Group Creation (`createBindGroup`): **DONE**.
+        *   Command Encoding: *PENDING* (Methods for render/compute pass encoders like `setPipeline`, `setBindGroup`, `setVertexBuffer`, `setIndexBuffer`, `draw`, `drawIndexed`, `dispatchWorkgroups`, `end`).
+        *   Command Buffer (`commandEncoderFinish`): *PENDING*.
+        *   Queue Operations (`queueWriteBuffer`, `queueSubmit`): **DONE**. `queueWriteTexture`: *PENDING*.
+        *   Handle Management (`releaseHandle`): **DONE**.
+        *   Error Handling (`getAndLogWebGPUError` mechanism): **DONE**. (JS side `readBindGroupLayoutDescriptorFromMemory` also updated).
+    4.  **Implement Zig Externs and Wrappers (`src/webgpu.zig`):** **DONE** for implemented JS functions. Zig FFI wrappers include logging and error handling.
+    5.  **Testing (Basic):** **DONE** (through iterative demo development and fixing compilation errors).
 
 **Phase 2: Develop Particle Simulator Demo**
 
 *   **Steps:**
-    1.  **Project Setup:**
-        *   Directory Structure (for `demos/particle_simulator`): **DONE**
-        *   `build.zig` updates: Assumed **DONE** by user for compilation.
-    2.  **Implement `webgpu_handler.zig`:** **DONE**
-    3.  **Port Shaders:** **DONE** (all WGSL files created, embedded in `renderer.zig`).
+    1.  **Project Setup (directory structure, `build.zig` updates):** **DONE**.
+    2.  **Implement `webgpu_handler.zig`:** **DONE**.
+    3.  **Port Shaders (WGSL files embedded in `renderer.zig`):** **DONE**.
     4.  **Implement `renderer.zig`:**
-        *   Initialization (get device/queue): **DONE**
-        *   Resource Management (Buffers, Textures): **DONE**
-        *   Shader Modules: **DONE**
-        *   Bind Group Layouts: *In Progress (Blocked by FFI)*
-        *   Bind Groups: *In Progress (Blocked by FFI)*
-        *   Pipeline Creation: *In Progress (Blocked by FFI)*
-        *   Render Loop (`renderFrame` function): **DONE** (Core logic implemented, compose pass placeholder).
+        *   Initialization (get device/queue): **DONE**.
+        *   Resource Management (using FFI for Buffers, Textures, ShaderModules, BindGroupLayouts, BindGroups; corrected handle usage, descriptor initialization, error handling for queue ops): **DONE**.
+        *   Shader Modules (creation via FFI): **DONE**.
+        *   Bind Group Layouts (creation via FFI, `BindGroupLayoutEntry` initialization updated): **DONE**.
+        *   Bind Groups (creation via FFI): **DONE**.
+        *   Pipeline Creation: *In Progress (Partially blocked by FFI for `PipelineLayout`, `RenderPipeline`, `ComputePipeline`). Work on command recording functions using FFI is ongoing.*
+        *   Render Loop (`renderFrame` function): *In Progress (significant changes to use free-function FFI calls for resource creation and command recording; `try` added to queue operations).*
     5.  **Implement `simulation.zig` and `main.zig`:**
-        *   `simulation.zig`: *PENDING*
-        *   `main.zig`: Basic WebGPU init via `webgpu_handler` and `update_frame` loop exists. `renderer` instantiation and `renderFrame` calls **DONE**.
+        *   `simulation.zig`: *In Progress* (particle data generation with `random.DefaultPrng`).
+        *   `main.zig`: *In Progress* (driving compilation, basic structure, `std` usage reduction ongoing).
     6.  **Update HTML/JS Frontend (`demos/particle_simulator/web/`):**
         *   `index.html`: Exists.
         *   `main.js`: Wasm loading, basic `init`/`update_frame` calls: **DONE**. UI controls and detailed simulation interaction: *PENDING*.
