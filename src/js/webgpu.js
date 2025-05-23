@@ -27,8 +27,10 @@ const globalWebGPU = {
     // Callback functions from Zig
     zig_receive_adapter: null,
     zig_receive_device: null,
+    zig_on_device_lost: null, // Added for device lost callback
     commandBuffers: [null], // Added for GPUCommandBuffer handles
     samplers: [null], // Added for GPUSampler handles
+    lastDeviceLostMessage: null, // Added for device lost message
 };
 
 // Function to be called by main.js after Wasm instantiation
@@ -1536,91 +1538,43 @@ export const webGPUNativeImports = {
             if (descriptor_ptr) {
                 const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
                 const wasmMemoryF32 = new Float32Array(globalWebGPU.wasmMemory.buffer);
-                const wasmMemoryU16 = new Uint16Array(globalWebGPU.wasmMemory.buffer);
-                let offset_u32 = descriptor_ptr / 4;
+                // const wasmMemoryU16 = new Uint16Array(globalWebGPU.wasmMemory.buffer); // Not needed with DataView
+                const memoryView = new DataView(globalWebGPU.wasmMemory.buffer);
+                let current_offset_bytes = descriptor_ptr;
 
-                // SamplerDescriptor layout from webgpu.zig:
-                // label: ?[*:0]const u8 = null, (ptr, offset 0)
-                // address_mode_u: GPUAddressMode = .clamp_to_edge, (u32, offset 8 after label ptr)
-                // address_mode_v: GPUAddressMode = .clamp_to_edge, (u32, offset 12)
-                // address_mode_w: GPUAddressMode = .clamp_to_edge, (u32, offset 16)
-                // mag_filter: GPUFilterMode = .nearest, (u32, offset 20)
-                // min_filter: GPUFilterMode = .nearest, (u32, offset 24)
-                // mipmap_filter: GPUMipmapFilterMode = .nearest, (u32, offset 28)
-                // lod_min_clamp: f32 = 0.0, (f32, offset 32)
-                // lod_max_clamp: f32 = 32.0, (f32, offset 36)
-                // compare: ?GPUCompareFunction = null, (u32 for enum value + u8 for has_value, say offset 40 for value, 44 for has_value)
-                // max_anisotropy: u16 = 1 (u16, offset 48 assuming compare took 8 bytes with padding)
 
-                const label_ptr = wasmMemoryU32[offset_u32++]; // Reads label ptr (descriptor_ptr + 0)
-                // offset_u32 is now (descriptor_ptr/4) + 1. For next field (address_mode_u), which is at byte offset 8 from desc start (if label_ptr is 8 bytes)
-                // If label_ptr is 4 bytes, then addr_mode_u is at byte offset 4.
-                // Let's assume Zig pointer is 4 bytes for wasm32.
-                // label: ptr (4 bytes)
-                // address_mode_u (4 bytes)
-                // address_mode_v (4 bytes)
-                // address_mode_w (4 bytes)
-                // mag_filter (4 bytes)
-                // min_filter (4 bytes)
-                // mipmap_filter (4 bytes)
-                // lod_min_clamp (4 bytes)
-                // lod_max_clamp (4 bytes)
-                // compare_value (4 bytes) + compare_has_value (1 byte, padded to 4 for alignment? -> total 8 bytes for optional compare)
-                // max_anisotropy (2 bytes)
-
+                const label_ptr = memoryView.getUint32(current_offset_bytes, true); current_offset_bytes +=4;
+                // Assuming pointer size is 4 for wasm32. If label_ptr is non-zero, read it.
+                // The actual size of label field in struct is pointer size (4 or 8).
+                // For wasm32, it's 4. For wasm64, it would be 8.
+                // The next field starts after the pointer.
+                // The Zig struct is: label: ?[*:0]const u8 (ptr, 4 bytes for wasm32)
+                // Then all u32 enums, then f32, then optional u32 enum, then u16
+                // So, after label_ptr (4 bytes), the next field (address_mode_u) starts.
+                
                 if (label_ptr) jsDescriptor.label = readStringFromMemory(label_ptr);
 
-                jsDescriptor.addressModeU = ZIG_ADDRESS_MODE_TO_JS[wasmMemoryU32[offset_u32++]];
-                jsDescriptor.addressModeV = ZIG_ADDRESS_MODE_TO_JS[wasmMemoryU32[offset_u32++]];
-                jsDescriptor.addressModeW = ZIG_ADDRESS_MODE_TO_JS[wasmMemoryU32[offset_u32++]];
-                jsDescriptor.magFilter = ZIG_FILTER_MODE_TO_JS[wasmMemoryU32[offset_u32++]];
-                jsDescriptor.minFilter = ZIG_FILTER_MODE_TO_JS[wasmMemoryU32[offset_u32++]];
-                jsDescriptor.mipmapFilter = ZIG_MIPMAP_FILTER_MODE_TO_JS[wasmMemoryU32[offset_u32++]];
-                jsDescriptor.lodMinClamp = wasmMemoryF32[offset_u32++]; 
-                jsDescriptor.lodMaxClamp = wasmMemoryF32[offset_u32++];
+                jsDescriptor.addressModeU = ZIG_ADDRESS_MODE_TO_JS[memoryView.getUint32(current_offset_bytes, true)]; current_offset_bytes +=4;
+                jsDescriptor.addressModeV = ZIG_ADDRESS_MODE_TO_JS[memoryView.getUint32(current_offset_bytes, true)]; current_offset_bytes +=4;
+                jsDescriptor.addressModeW = ZIG_ADDRESS_MODE_TO_JS[memoryView.getUint32(current_offset_bytes, true)]; current_offset_bytes +=4;
+                jsDescriptor.magFilter = ZIG_FILTER_MODE_TO_JS[memoryView.getUint32(current_offset_bytes, true)]; current_offset_bytes +=4;
+                jsDescriptor.minFilter = ZIG_FILTER_MODE_TO_JS[memoryView.getUint32(current_offset_bytes, true)]; current_offset_bytes +=4;
+                jsDescriptor.mipmapFilter = ZIG_MIPMAP_FILTER_MODE_TO_JS[memoryView.getUint32(current_offset_bytes, true)]; current_offset_bytes +=4;
+                jsDescriptor.lodMinClamp = memoryView.getFloat32(current_offset_bytes, true); current_offset_bytes +=4;
+                jsDescriptor.lodMaxClamp = memoryView.getFloat32(current_offset_bytes, true); current_offset_bytes +=4;
                 
-                const compare_val = wasmMemoryU32[offset_u32++];
-                // Assuming Zig passes compare: ?GPUCompareFunction as two fields in extern struct if not using a more complex optional representation:
-                // compare_value: u32, compare_is_present: bool (u8/u32)
-                // For Zig `?EnumType = null`, if it's a direct field, it needs a presence indicator.
-                // Let's assume Zig wrapper ensures `compare_val` is a special value (e.g. MAX_U32) if null,
-                // or descriptor_ptr itself implies if it's a default or full descriptor.
-                // The current SamplerDescriptor in Zig has `compare: ?GPUCompareFunction = null`.
-                // If Zig just passes the value of the enum (or 0/sentinel for null), need to check that sentinel carefully.
-                // The ZIG_COMPARE_FUNCTION_TO_JS handles a default if value not found.
-                // If we assume Zig passes 0 if the optional compare function is not set (and 0 is not a valid compare func for this map)
-                // This mapping needs to be robust to `undefined` if 0 is passed for null.
-                // The `ZIG_COMPARE_FUNCTION_TO_JS` mapping does not have 0 as a valid input for 'never' (it starts 'never' at 0).
-                // This is fine. If Zig sends 0 for no-compare, and our map for 0 is 'never', WebGPU will error if 'never' is used on non-comparison sampler.
-                // WebGPU API: `compare` is only valid for comparison samplers.
-                // So, if Zig `compare` field is null, we should NOT set `jsDescriptor.compare`.
-                // A robust way is for Zig to pass a boolean flag for optional fields in extern structs.
-                // For now, assuming if `compare_val` maps to something via `ZIG_COMPARE_FUNCTION_TO_JS` it's used.
-                // This will require care on Zig side. A better way: Zig sends specific sentinel for null, or a has_value byte.
-                // Let's assume Zig struct will have `compare_value: u32` and `compare_has_value: bool` (u8 then padded)
-                // So, after compare_val: `const compare_is_present = wasmMemoryU32[offset_u32++] !== 0;` (if bool is u32)
-                // If using the `compare: ?GPUCompareFunction = null` approach from Zig, need to verify how Zig compiler handles this for extern structs.
-                // Assuming for now that if compare is null in Zig, it won't be included or will be a sentinel.
-                // The current Zig struct has compare: ?GPUCompareFunction = null. This means it will have a has_value byte.
-                // The value itself is at offset_u32. The has_value is at (descriptor_ptr + current_byte_offset_of_has_value_field)
-                // Let's adjust reading to be more explicit about struct layout for optional enum. Field order: lodMaxClamp (f32), compare_value (u32), compare_has_value (u8), max_anisotropy (u16).
-                // Offset of compare_value from start of descriptor: label(4) + 6*u32_enums(24) + 2*f32_lods(8) = 36 bytes. So offset_u32 points to compare_val.
-                const compare_is_present_offset_bytes = descriptor_ptr + 36 + 4; // After compare_val (u32)
-                const compare_is_present = new Uint8Array(globalWebGPU.wasmMemory.buffer, compare_is_present_offset_bytes, 1)[0] !== 0;
+                const compare_val = memoryView.getUint32(current_offset_bytes, true); current_offset_bytes +=4;
+                const compare_is_present = memoryView.getUint8(current_offset_bytes, true) !== 0; current_offset_bytes +=1;
+                // Align to next 2-byte boundary for maxAnisotropy (u16)
+                // current_offset_bytes is now descriptor_ptr + 4(label) + 6*4(enums) + 2*4(lods) + 4(compare_val) + 1(compare_is_present) = 4+24+8+4+1 = 41
+                // Next field (max_anisotropy) needs to be 2-byte aligned. 41 is not. So there's 1 byte padding.
+                current_offset_bytes = (current_offset_bytes + 1) & ~1; // Align to 2 bytes for u16 read
+
                 if (compare_is_present) {
                     jsDescriptor.compare = ZIG_COMPARE_FUNCTION_TO_JS[compare_val];
                 }
-                // offset_u32 was already advanced past compare_val. Now advance past compare_is_present (assuming it was padded to 4 bytes for alignment)
-                offset_u32++; // Assuming compare_value (u32) and compare_is_present (u32 due to padding)
                 
-                // max_anisotropy is u16. It would be at byte_offset = descriptor_ptr + 36(label+enums) + 8(lods) + 8(compare_opt) = 52
-                jsDescriptor.maxAnisotropy = wasmMemoryU16[ (descriptor_ptr / 2) + (52 / 2) ]; // Careful with u16 indexing from base u32 offset_ptr
-                                                                                                // Simpler: use byte offset for DataView
-                const max_anisotropy_offset_bytes = descriptor_ptr + 36 + 8 + 8; // Label(4)+Enums(24)+LODs(8)+CompareOpt(8 for val+flag+pad) = 52
-                jsDescriptor.maxAnisotropy = new DataView(globalWebGPU.wasmMemory.buffer).getUint16(max_anisotropy_offset_bytes, true);
-
-            } else { // No descriptor_ptr, use WebGPU defaults (which are mostly what our Zig defaults are)
-                // JS default for createSampler({}) is fine.
+                jsDescriptor.maxAnisotropy = memoryView.getUint16(current_offset_bytes, true); // current_offset_bytes += 2;
             }
 
             const sampler = device.createSampler(jsDescriptor);
@@ -1630,8 +1584,161 @@ export const webGPUNativeImports = {
         }
     },
 
+    // Device Lost Promise Handling
+    env_device_get_lost_promise_js: function(device_handle) {
+        const device = globalWebGPU.devices[device_handle];
+        if (!device) {
+            recordError(`Invalid device handle for get_lost_promise: ${device_handle}`);
+            // Optionally call zig_on_device_lost with error if appropriate
+            if (globalWebGPU.wasmExports && globalWebGPU.wasmExports.zig_on_device_lost) {
+                 // Store a generic error message for Zig to pick up
+                globalWebGPU.lastDeviceLostMessage = new TextEncoder().encode("Device handle invalid for get_lost_promise.");
+                globalWebGPU.wasmExports.zig_on_device_lost(device_handle, 0); // 0 for undefined reason
+            }
+            return;
+        }
+
+        device.lost.then(lostInfo => {
+            const reasonStr = lostInfo.reason; // 'undefined' or 'destroyed'
+            const reasonEnumVal = (reasonStr === 'destroyed') ? 1 : 0; // Map to Zig DeviceLostReason
+            const messageStr = lostInfo.message || "No message provided";
+            
+            globalWebGPU.lastDeviceLostMessage = new TextEncoder().encode(messageStr);
+
+            if (globalWebGPU.wasmExports && globalWebGPU.wasmExports.zig_on_device_lost) {
+                globalWebGPU.wasmExports.zig_on_device_lost(device_handle, reasonEnumVal);
+            } else {
+                console.error("[webgpu.js] zig_on_device_lost callback not found in Wasm exports.");
+            }
+        }).catch(err => {
+            // This catch is for errors in setting up the promise or if the promise itself rejects,
+            // though device.lost typically resolves with info, not rejects.
+            recordError(`Error with device.lost promise for device ${device_handle}: ${err.message}`);
+            if (globalWebGPU.wasmExports && globalWebGPU.wasmExports.zig_on_device_lost) {
+                globalWebGPU.lastDeviceLostMessage = new TextEncoder().encode(err.message);
+                globalWebGPU.wasmExports.zig_on_device_lost(device_handle, 0); // Undefined reason on error
+            }
+        });
+    },
+
+    env_get_last_device_lost_message_length_js: function() {
+        return globalWebGPU.lastDeviceLostMessage ? globalWebGPU.lastDeviceLostMessage.length : 0;
+    },
+
+    env_copy_last_device_lost_message_js: function(buffer_ptr, buffer_len) {
+        if (globalWebGPU.lastDeviceLostMessage && buffer_ptr && buffer_len > 0) {
+            const memory = globalWebGPU.memory; // Use the stored memory
+            if (!memory) {
+                console.error("[webgpu.js] Wasm memory not available for copying device lost message.");
+                return;
+            }
+            const wasmMemoryArray = new Uint8Array(memory.buffer, buffer_ptr, buffer_len);
+            const lenToCopy = Math.min(globalWebGPU.lastDeviceLostMessage.length, buffer_len);
+            for (let i = 0; i < lenToCopy; i++) {
+                wasmMemoryArray[i] = globalWebGPU.lastDeviceLostMessage[i];
+            }
+            // Optionally clear lastDeviceLostMessage after copying if it's single-use
+            // globalWebGPU.lastDeviceLostMessage = null; 
+        }
+    },
+
     // Other queue functions ...
 
+    env_adapter_get_limits_js: function(adapter_handle, limits_ptr) {
+        try {
+            const adapter = globalWebGPU.adapters[adapter_handle];
+            if (!adapter) {
+                return recordError(`Adapter not found for handle: ${adapter_handle}`);
+            }
+            if (!adapter.limits) {
+                return recordError(`Adapter limits not available for handle: ${adapter_handle}`);
+            }
+            if (!globalWebGPU.memory || !globalWebGPU.memory.buffer) {
+                return recordError("Wasm memory not available for writing limits.");
+            }
+
+            const dataView = new DataView(globalWebGPU.memory.buffer);
+            let offset = limits_ptr;
+
+            dataView.setUint32(offset, adapter.limits.maxTextureDimension1D || 0, true); offset += 4;
+            dataView.setUint32(offset, adapter.limits.maxTextureDimension2D || 0, true); offset += 4;
+            dataView.setUint32(offset, adapter.limits.maxTextureDimension3D || 0, true); offset += 4;
+            dataView.setUint32(offset, adapter.limits.maxTextureArrayLayers || 0, true); offset += 4;
+            dataView.setUint32(offset, adapter.limits.maxBindGroups || 0, true); offset += 4;
+            dataView.setUint32(offset, adapter.limits.maxDynamicUniformBuffersPerPipelineLayout || 0, true); offset += 4;
+            dataView.setUint32(offset, adapter.limits.maxDynamicStorageBuffersPerPipelineLayout || 0, true); offset += 4;
+            dataView.setUint32(offset, adapter.limits.maxSampledTexturesPerShaderStage || 0, true); offset += 4;
+            dataView.setUint32(offset, adapter.limits.maxSamplersPerShaderStage || 0, true); offset += 4;
+            dataView.setUint32(offset, adapter.limits.maxStorageBuffersPerShaderStage || 0, true); offset += 4;
+            dataView.setUint32(offset, adapter.limits.maxStorageTexturesPerShaderStage || 0, true); offset += 4;
+            dataView.setUint32(offset, adapter.limits.maxUniformBuffersPerShaderStage || 0, true); offset += 4;
+            dataView.setBigUint64(offset, BigInt(adapter.limits.maxUniformBufferBindingSize || 0), true); offset += 8;
+            dataView.setBigUint64(offset, BigInt(adapter.limits.maxStorageBufferBindingSize || 0), true); offset += 8;
+            dataView.setUint32(offset, adapter.limits.minUniformBufferOffsetAlignment || 0, true); offset += 4;
+            dataView.setUint32(offset, adapter.limits.minStorageBufferOffsetAlignment || 0, true); offset += 4;
+            dataView.setUint32(offset, adapter.limits.maxVertexBuffers || 0, true); offset += 4;
+            dataView.setUint32(offset, adapter.limits.maxVertexAttributes || 0, true); offset += 4;
+            dataView.setUint32(offset, adapter.limits.maxVertexBufferArrayStride || 0, true); offset += 4;
+            dataView.setUint32(offset, adapter.limits.maxInterStageShaderComponents || 0, true); offset += 4;
+            dataView.setUint32(offset, adapter.limits.maxComputeWorkgroupStorageSize || 0, true); offset += 4;
+            dataView.setUint32(offset, adapter.limits.maxComputeInvocationsPerWorkgroup || 0, true); offset += 4;
+            dataView.setUint32(offset, adapter.limits.maxComputeWorkgroupSizeX || 0, true); offset += 4;
+            dataView.setUint32(offset, adapter.limits.maxComputeWorkgroupSizeY || 0, true); offset += 4;
+            dataView.setUint32(offset, adapter.limits.maxComputeWorkgroupSizeZ || 0, true); offset += 4;
+            dataView.setUint32(offset, adapter.limits.maxComputeWorkgroupsPerDimension || 0, true); // offset += 4; // Last field
+
+        } catch (e) {
+            recordError(e.message);
+        }
+    },
+
+    env_device_get_limits_js: function(device_handle, limits_ptr) {
+        try {
+            const device = globalWebGPU.devices[device_handle];
+            if (!device) {
+                return recordError(`Device not found for handle: ${device_handle}`);
+            }
+            if (!device.limits) {
+                return recordError(`Device limits not available for handle: ${device_handle}`);
+            }
+             if (!globalWebGPU.memory || !globalWebGPU.memory.buffer) {
+                return recordError("Wasm memory not available for writing limits.");
+            }
+
+            const dataView = new DataView(globalWebGPU.memory.buffer);
+            let offset = limits_ptr;
+
+            dataView.setUint32(offset, device.limits.maxTextureDimension1D || 0, true); offset += 4;
+            dataView.setUint32(offset, device.limits.maxTextureDimension2D || 0, true); offset += 4;
+            dataView.setUint32(offset, device.limits.maxTextureDimension3D || 0, true); offset += 4;
+            dataView.setUint32(offset, device.limits.maxTextureArrayLayers || 0, true); offset += 4;
+            dataView.setUint32(offset, device.limits.maxBindGroups || 0, true); offset += 4;
+            dataView.setUint32(offset, device.limits.maxDynamicUniformBuffersPerPipelineLayout || 0, true); offset += 4;
+            dataView.setUint32(offset, device.limits.maxDynamicStorageBuffersPerPipelineLayout || 0, true); offset += 4;
+            dataView.setUint32(offset, device.limits.maxSampledTexturesPerShaderStage || 0, true); offset += 4;
+            dataView.setUint32(offset, device.limits.maxSamplersPerShaderStage || 0, true); offset += 4;
+            dataView.setUint32(offset, device.limits.maxStorageBuffersPerShaderStage || 0, true); offset += 4;
+            dataView.setUint32(offset, device.limits.maxStorageTexturesPerShaderStage || 0, true); offset += 4;
+            dataView.setUint32(offset, device.limits.maxUniformBuffersPerShaderStage || 0, true); offset += 4;
+            dataView.setBigUint64(offset, BigInt(device.limits.maxUniformBufferBindingSize || 0), true); offset += 8;
+            dataView.setBigUint64(offset, BigInt(device.limits.maxStorageBufferBindingSize || 0), true); offset += 8;
+            dataView.setUint32(offset, device.limits.minUniformBufferOffsetAlignment || 0, true); offset += 4;
+            dataView.setUint32(offset, device.limits.minStorageBufferOffsetAlignment || 0, true); offset += 4;
+            dataView.setUint32(offset, device.limits.maxVertexBuffers || 0, true); offset += 4;
+            dataView.setUint32(offset, device.limits.maxVertexAttributes || 0, true); offset += 4;
+            dataView.setUint32(offset, device.limits.maxVertexBufferArrayStride || 0, true); offset += 4;
+            dataView.setUint32(offset, device.limits.maxInterStageShaderComponents || 0, true); offset += 4;
+            dataView.setUint32(offset, device.limits.maxComputeWorkgroupStorageSize || 0, true); offset += 4;
+            dataView.setUint32(offset, device.limits.maxComputeInvocationsPerWorkgroup || 0, true); offset += 4;
+            dataView.setUint32(offset, device.limits.maxComputeWorkgroupSizeX || 0, true); offset += 4;
+            dataView.setUint32(offset, device.limits.maxComputeWorkgroupSizeY || 0, true); offset += 4;
+            dataView.setUint32(offset, device.limits.maxComputeWorkgroupSizeZ || 0, true); offset += 4;
+            dataView.setUint32(offset, device.limits.maxComputeWorkgroupsPerDimension || 0, true); // offset += 4; // Last field
+
+        } catch (e) {
+            recordError(e.message);
+        }
+    },
 };
 
 // --- Helper Mappings for Enum Zig -> JS ---
@@ -1674,10 +1781,38 @@ const ZIG_TEXTURE_FORMAT_TO_JS = {
     30: "rgba16uint", 31: "rgba16sint", 32: "rgba16float",
     33: "rgba32uint", 34: "rgba32sint", 35: "rgba32float",
     36: "stencil8", 37: "depth16unorm", 38: "depth24plus",
-    39: "depth24plus-stencil8", 40: "depth32float", 41: "depth32float-stencil8",
-    // Add other formats as they are added to Zig enum
+    40: "depth32float", 41: "depth32float-stencil8", 42: "depth24unorm-stencil8",
+    // BC formats
+    43: "bc1-rgba-unorm", 44: "bc1-rgba-unorm-srgb",
+    45: "bc2-rgba-unorm", 46: "bc2-rgba-unorm-srgb",
+    47: "bc3-rgba-unorm", 48: "bc3-rgba-unorm-srgb",
+    49: "bc4-r-unorm", 50: "bc4-r-snorm",
+    51: "bc5-rg-unorm", 52: "bc5-rg-snorm",
+    53: "bc6h-rgb-ufloat", 54: "bc6h-rgb-sfloat",
+    55: "bc7-rgba-unorm", 56: "bc7-rgba-unorm-srgb",
+    // ETC2 formats
+    57: "etc2-rgb8unorm", 58: "etc2-rgb8unorm-srgb",
+    59: "etc2-rgb8a1unorm", 60: "etc2-rgb8a1unorm-srgb",
+    61: "etc2-rgba8unorm", 62: "etc2-rgba8unorm-srgb",
+    63: "eac-r11unorm", 64: "eac-r11snorm",
+    65: "eac-rg11unorm", 66: "eac-rg11snorm",
+    // ASTC formats
+    67: "astc-4x4-unorm", 68: "astc-4x4-unorm-srgb",
+    69: "astc-5x4-unorm", 70: "astc-5x4-unorm-srgb",
+    71: "astc-5x5-unorm", 72: "astc-5x5-unorm-srgb",
+    73: "astc-6x5-unorm", 74: "astc-6x5-unorm-srgb",
+    75: "astc-6x6-unorm", 76: "astc-6x6-unorm-srgb",
+    77: "astc-8x5-unorm", 78: "astc-8x5-unorm-srgb",
+    79: "astc-8x6-unorm", 80: "astc-8x6-unorm-srgb",
+    81: "astc-8x8-unorm", 82: "astc-8x8-unorm-srgb",
+    83: "astc-10x5-unorm", 84: "astc-10x5-unorm-srgb",
+    85: "astc-10x6-unorm", 86: "astc-10x6-unorm-srgb",
+    87: "astc-10x8-unorm", 88: "astc-10x8-unorm-srgb",
+    89: "astc-10x10-unorm", 90: "astc-10x10-unorm-srgb",
+    91: "astc-12x10-unorm", 92: "astc-12x10-unorm-srgb",
+    93: "astc-12x12-unorm", 94: "astc-12x12-unorm-srgb",
 };
-function mapTextureFormatZigToJs(zigValue) {
+function mapTextureFormatZigToJs(zigValue) { // This function maps Zig enum value to JS string
     const format = ZIG_TEXTURE_FORMAT_TO_JS[zigValue];
     if (!format) {
         console.warn(`[webgpu.js] Unknown Zig TextureFormat enum value: ${zigValue}`);
@@ -1685,6 +1820,18 @@ function mapTextureFormatZigToJs(zigValue) {
     }
     return format;
 }
+
+// This function maps JS String to Zig enum value
+function mapTextureFormatToZigEnum(formatStr) { // Renamed from mapTextureFormatFromZigEnum
+    for (const key in ZIG_TEXTURE_FORMAT_TO_JS) {
+        if (ZIG_TEXTURE_FORMAT_TO_JS[key] === formatStr) {
+            return parseInt(key, 10);
+        }
+    }
+    console.warn(`[webgpu.js] Unhandled texture format string: ${formatStr}`);
+    return undefined; // Or some default/error value like an enum for "unknown"
+}
+
 
 const ZIG_TEXTURE_ASPECT_TO_JS = {
     0: "all",
@@ -1703,6 +1850,90 @@ const ZIG_BUFFER_BINDING_TYPE_TO_JS = {
 function mapBufferBindingTypeZigToJs(zigValue) {
     return ZIG_BUFFER_BINDING_TYPE_TO_JS[zigValue] || "uniform";
 }
+
+const ZIG_TEXTURE_VIEW_DIMENSION_TO_JS = {
+    0: "1d",
+    1: "2d",
+    2: "2d-array",
+    3: "cube",
+    4: "cube-array",
+    5: "3d",
+};
+function mapTextureViewDimensionZigToJs(zigValue) { // Used by readTextureViewDescriptor
+    return ZIG_TEXTURE_VIEW_DIMENSION_TO_JS[zigValue]; // Will return undefined if not found, which is okay if Zig ensures valid values.
+}
+// No mapTextureViewDimensionToZigEnum needed if only passed from Zig to JS.
+
+const ZIG_POWER_PREFERENCE_TO_JS = {
+    0: "low-power",
+    1: "high-performance",
+};
+function mapPowerPreferenceZigToJs(zigValue) {
+    return ZIG_POWER_PREFERENCE_TO_JS[zigValue]; // Will return undefined if not found
+}
+function mapPowerPreferenceToZigEnum(jsString) {
+    for (const key in ZIG_POWER_PREFERENCE_TO_JS) {
+        if (ZIG_POWER_PREFERENCE_TO_JS[key] === jsString) {
+            return parseInt(key, 10);
+        }
+    }
+    return undefined; 
+}
+
+const ZIG_PRESENT_MODE_TO_JS = {
+    0: "fifo",
+    1: "fifo-relaxed",
+    2: "immediate",
+    3: "mailbox",
+};
+function mapPresentModeZigToJs(zigValue) {
+    return ZIG_PRESENT_MODE_TO_JS[zigValue];
+}
+function mapPresentModeToZigEnum(jsString) {
+    for (const key in ZIG_PRESENT_MODE_TO_JS) {
+        if (ZIG_PRESENT_MODE_TO_JS[key] === jsString) {
+            return parseInt(key, 10);
+        }
+    }
+    return undefined; 
+}
+
+const ZIG_FEATURE_NAME_TO_JS = {
+    0: "depth-clip-control",
+    1: "depth32float-stencil8",
+    2: "texture-compression-bc",
+    3: "texture-compression-etc2",
+    4: "texture-compression-astc",
+    5: "timestamp-query",
+    6: "indirect-first-instance",
+    7: "shader-f16",
+    8: "rg11b10ufloat-renderable",
+    9: "bgra8unorm-storage",
+    10: "float32-filterable",
+    11: "clip-distances",
+    12: "dual-source-blending",
+};
+function mapFeatureNameZigToJs(zigValue) { // Zig enum u32 to JS string
+    return ZIG_FEATURE_NAME_TO_JS[zigValue]; // Will return undefined if not found
+}
+function mapFeatureNameToZigEnum(jsString) { // JS string to Zig enum u32
+    for (const key in ZIG_FEATURE_NAME_TO_JS) {
+        if (ZIG_FEATURE_NAME_TO_JS[key] === jsString) {
+            return parseInt(key, 10);
+        }
+    }
+    return undefined; // Or handle as an error
+}
+
+const ZIG_ERROR_FILTER_TO_JS = {
+    0: "validation",
+    1: "out-of-memory",
+    2: "internal", 
+};
+function mapErrorFilterZigToJs(zigValue) {
+    return ZIG_ERROR_FILTER_TO_JS[zigValue]; // Will return undefined if not found
+}
+// No mapErrorFilterToZigEnum is strictly needed if it's only passed from Zig to JS.
 
 const ZIG_TEXTURE_SAMPLE_TYPE_TO_JS = {
     0: "float",

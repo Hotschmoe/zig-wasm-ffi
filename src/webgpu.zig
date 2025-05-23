@@ -50,7 +50,55 @@ pub const HandleType = enum(u32) {
     render_pass_encoder = 17,
     compute_pass_encoder = 18,
     query_set = 19,
+    canvas_context = 20,
     // TODO: Add other WebGPU object types here as they are introduced
+};
+
+// --- Feature Names (Spec §27.1) ---
+pub const GPUFeatureName = enum(u32) {
+    depth_clip_control, // "depth-clip-control"
+    depth32float_stencil8, // "depth32float-stencil8"
+    texture_compression_bc, // "texture-compression-bc"
+    texture_compression_etc2, // "texture-compression-etc2"
+    texture_compression_astc, // "texture-compression-astc"
+    timestamp_query, // "timestamp-query"
+    indirect_first_instance, // "indirect-first-instance"
+    shader_f16, // "shader-f16"
+    rg11b10ufloat_renderable, // "rg11b10ufloat-renderable"
+    bgra8unorm_storage, // "bgra8unorm-storage"
+    float32_filterable, // "float32-filterable"
+    clip_distances, // "clip-distances" - WGSL feature
+    dual_source_blending, // "dual-source-blending" - WGSL feature
+    high_performance, // "high-performance"
+};
+
+pub const GPUPresentMode = enum(u32) {
+    fifo = 0, // "fifo"
+    fifo_relaxed = 1, // "fifo-relaxed"
+    immediate = 2,    // "immediate"
+    mailbox = 3,      // "mailbox"
+};
+
+// --- Canvas Types ---
+pub const GPUCanvasContext = u32; // Opaque handle
+
+pub const GPUCanvasAlphaMode = enum(u32) {
+    opaque = 0,
+    premultiplied = 1,
+};
+
+pub const PredefinedColorSpace = enum(u32) {
+    srgb = 0, // Only "srgb" is currently widely supported
+};
+
+pub const GPUCanvasConfiguration = extern struct {
+    device: Device,
+    format: TextureFormat,
+    usage: u32 = GPUTextureUsage.RENDER_ATTACHMENT, // Default usage
+    view_formats: ?[*]const TextureFormat = null,
+    view_formats_count: usize = 0,
+    color_space: PredefinedColorSpace = .srgb,
+    alpha_mode: GPUCanvasAlphaMode = .opaque,
 };
 
 // --- Descriptors ---
@@ -142,6 +190,15 @@ pub const TextureDimension = enum(u32) {
     // Removed fromStr and toJsStringId to avoid std dependency here
 };
 
+pub const GPUTextureViewDimension = enum(u32) {
+    @"1d" = 0,
+    @"2d" = 1,
+    @"2d_array" = 2, // "2d-array"
+    cube = 3,
+    cube_array = 4,
+    @"3d" = 5,
+};
+
 /// Corresponds to GPUTextureFormat
 /// This is a partial list. Many more formats exist.
 pub const TextureFormat = enum(u32) {
@@ -194,10 +251,65 @@ pub const TextureFormat = enum(u32) {
     depth24plus_stencil8 = 39,
     depth32float = 40,
     depth32float_stencil8 = 41, // If feature "depth32float-stencil8" is enabled
+    depth24unorm_stencil8 = 42, // Added
 
     // BC compressed formats (feature: "texture-compression-bc")
-    // ASTC compressed formats (feature: "texture-compression-astc")
+    bc1_rgba_unorm = 43,
+    bc1_rgba_unorm_srgb = 44,
+    bc2_rgba_unorm = 45,
+    bc2_rgba_unorm_srgb = 46,
+    bc3_rgba_unorm = 47,
+    bc3_rgba_unorm_srgb = 48,
+    bc4_r_unorm = 49,
+    bc4_r_snorm = 50,
+    bc5_rg_unorm = 51,
+    bc5_rg_snorm = 52,
+    bc6h_rgb_ufloat = 53,
+    bc6h_rgb_sfloat = 54,
+    bc7_rgba_unorm = 55,
+    bc7_rgba_unorm_srgb = 56,
+
     // ETC2 compressed formats (feature: "texture-compression-etc2")
+    etc2_rgb8unorm = 57,
+    etc2_rgb8unorm_srgb = 58,
+    etc2_rgb8a1unorm = 59,
+    etc2_rgb8a1unorm_srgb = 60,
+    etc2_rgba8unorm = 61,
+    etc2_rgba8unorm_srgb = 62,
+    eac_r11unorm = 63,
+    eac_r11snorm = 64,
+    eac_rg11unorm = 65,
+    eac_rg11snorm = 66,
+
+    // ASTC compressed formats (feature: "texture-compression-astc")
+    astc_4x4_unorm = 67,
+    astc_4x4_unorm_srgb = 68,
+    astc_5x4_unorm = 69,
+    astc_5x4_unorm_srgb = 70,
+    astc_5x5_unorm = 71,
+    astc_5x5_unorm_srgb = 72,
+    astc_6x5_unorm = 73,
+    astc_6x5_unorm_srgb = 74,
+    astc_6x6_unorm = 75,
+    astc_6x6_unorm_srgb = 76,
+    astc_8x5_unorm = 77,
+    astc_8x5_unorm_srgb = 78,
+    astc_8x6_unorm = 79,
+    astc_8x6_unorm_srgb = 80,
+    astc_8x8_unorm = 81,
+    astc_8x8_unorm_srgb = 82,
+    astc_10x5_unorm = 83,
+    astc_10x5_unorm_srgb = 84,
+    astc_10x6_unorm = 85,
+    astc_10x6_unorm_srgb = 86,
+    astc_10x8_unorm = 87,
+    astc_10x8_unorm_srgb = 88,
+    astc_10x10_unorm = 89,
+    astc_10x10_unorm_srgb = 90,
+    astc_12x10_unorm = 91,
+    astc_12x10_unorm_srgb = 92,
+    astc_12x12_unorm = 93,
+    astc_12x12_unorm_srgb = 94,
 
     // Removed toJsStringId
 };
@@ -239,7 +351,7 @@ pub const TextureAspect = enum(u32) {
 pub const TextureViewDescriptor = extern struct {
     label: ?[*:0]const u8,
     format: ?TextureFormat = null,
-    dimension: ?TextureDimension = null, // NOTE: This should ideally be TextureViewDimension if it differs
+    dimension: ?GPUTextureViewDimension = null, // Use the new specific enum
     aspect: TextureAspect = .all,
     base_mip_level: u32 = 0,
     mip_level_count: ?u32 = null,
@@ -431,7 +543,7 @@ pub const PrimitiveState = extern struct { // Corresponds to GPUPrimitiveState
     strip_index_format: ?GPUIndexFormat = null,
     front_face: GPUFrontFace = .ccw,
     cull_mode: GPUCullMode = .none,
-    // unclipped_depth: bool = false, // Requires "depth-clip-control" feature
+    unclipped_depth: bool = false, // Requires "depth-clip-control" feature
 };
 
 pub const StencilFaceState = extern struct { // Corresponds to GPUStencilFaceState
@@ -453,6 +565,29 @@ pub const DepthStencilState = extern struct { // Corresponds to GPUDepthStencilS
     depth_bias_slope_scale: f32 = 0.0, // GPUSlopeScaledDepthBias
     depth_bias_clamp: f32 = 0.0,
 };
+
+// Ensure GPUStencilFaceState is defined (it should be from previous steps or needs to be added now)
+// pub const GPUStencilFaceState = extern struct {
+//    compare: GPUCompareFunction = .always,
+//    fail_op: GPUStencilOperation = .keep,
+//    depth_fail_op: GPUStencilOperation = .keep,
+//    pass_op: GPUStencilOperation = .keep,
+// };
+
+// DepthStencilState was already mostly complete, just verifying.
+// Defaults are handled by the user of the struct when initializing.
+// pub const DepthStencilState = extern struct { // Corresponds to GPUDepthStencilState
+//     format: TextureFormat, // Must be a depth/stencil format
+//     depth_write_enabled: bool = false,
+//     depth_compare: GPUCompareFunction = .always,
+//     stencil_front: StencilFaceState = .{},
+//     stencil_back: StencilFaceState = .{},
+//     stencil_read_mask: u32 = 0xFFFFFFFF,
+//     stencil_write_mask: u32 = 0xFFFFFFFF,
+//     depth_bias: i32 = 0, // GPUDepthBias
+//     depth_bias_slope_scale: f32 = 0.0, // GPUSlopeScaledDepthBias
+//     depth_bias_clamp: f32 = 0.0,
+// };
 
 pub const MultisampleState = extern struct { // Corresponds to GPUMultisampleState
     count: u32 = 1,
@@ -532,6 +667,18 @@ pub extern "env" fn env_wgpu_device_create_bind_group_js(device_handle: Device, 
 pub extern "env" fn env_wgpu_device_create_pipeline_layout_js(device_handle: Device, descriptor_ptr: *const PipelineLayoutDescriptor) callconv(.C) PipelineLayout;
 pub extern "env" fn env_wgpu_device_create_compute_pipeline_js(device_handle: Device, descriptor_ptr: *const ComputePipelineDescriptor) callconv(.C) ComputePipeline;
 pub extern "env" fn env_wgpu_device_create_render_pipeline_js(device_handle: Device, descriptor_ptr: *const RenderPipelineDescriptor) callconv(.C) RenderPipeline;
+
+// Canvas FFI
+pub extern "env" fn env_html_canvas_get_context_js(canvas_selector_ptr: [*c]const u8, canvas_selector_len: usize) callconv(.C) GPUCanvasContext;
+pub extern "env" fn env_gpu_get_preferred_canvas_format_js() callconv(.C) TextureFormat;
+pub extern "env" fn env_canvas_context_configure_js(context_handle: GPUCanvasContext, config_ptr: *const GPUCanvasConfiguration) void;
+pub extern "env" fn env_canvas_context_unconfigure_js(context_handle: GPUCanvasContext) void;
+pub extern "env" fn env_canvas_context_get_current_texture_js(context_handle: GPUCanvasContext) callconv(.C) Texture;
+
+// Device Lost FFI
+pub extern "env" fn env_device_get_lost_promise_js(device_handle: Device) void;
+pub extern "env" fn env_get_last_device_lost_message_length_js() callconv(.C) usize;
+pub extern "env" fn env_copy_last_device_lost_message_js(buffer_ptr: [*c]u8, buffer_len: usize) void;
 
 // Error Handling & Release
 pub extern "env" fn env_wgpu_get_last_error_msg_ptr_js() u32;
@@ -729,6 +876,7 @@ pub fn releaseHandle(handle_type: HandleType, handle: u32) void {
         .render_pass_encoder => @intFromEnum(HandleType.render_pass_encoder),
         .compute_pass_encoder => @intFromEnum(HandleType.compute_pass_encoder),
         .query_set => @intFromEnum(HandleType.query_set),
+        .canvas_context => @intFromEnum(HandleType.canvas_context),
     };
     env_wgpu_release_handle_js(@as(HandleType, @enumFromInt(type_id_for_js)), handle);
 }
@@ -741,7 +889,97 @@ pub const GeneralWebGPUError = error{
     QueueRetrievalFailed,
     InvalidHandle,
     OperationFailed,
+    InvalidDescriptor, // Added for descriptor validation
 };
+
+pub const DeviceLostReason = enum(u32) {
+    undefined = 0,
+    destroyed = 1,
+};
+
+pub const GPUDeviceLostInfo = extern struct {
+    reason: DeviceLostReason,
+    message: [*:0]const u8,
+};
+
+// HTMLCanvas convenience (not a direct WebGPU object, but related for setup)
+// These are non-handle returning functions, direct calls.
+pub const HTMLCanvas = struct {
+    pub fn getContext(canvas_selector: []const u8) !GPUCanvasContext {
+        webutils.log("HTMLCanvas: Getting WebGPU context (Zig FFI wrapper)...");
+        if (canvas_selector.len == 0) {
+            webutils.log("E00: Empty canvas selector passed to HTMLCanvas.getContext.");
+            return error.InvalidSelector; // Define InvalidSelector if needed, or use InvalidHandle
+        }
+        const context_handle = env_html_canvas_get_context_js(canvas_selector.ptr, canvas_selector.len);
+        if (context_handle == 0) {
+            getAndLogWebGPUError("E25: Failed to get GPUCanvasContext (JS context_handle is 0)."); // New Error Code E25
+            return error.OperationFailed;
+        }
+        webutils.log("GPUCanvasContext obtained.");
+        return context_handle;
+    }
+};
+
+// GPU global object convenience (navigator.gpu)
+pub const GPU = struct {
+    pub fn getPreferredCanvasFormat() !TextureFormat {
+        webutils.log("GPU: Getting preferred canvas format (Zig FFI wrapper)...");
+        const format_val = env_gpu_get_preferred_canvas_format_js();
+        // Assuming TextureFormat enum starts at 0 and is contiguous.
+        // JS will return the enum u32 value. If it's an invalid/unsupported format, JS might return a sentinel like max_u32
+        // or we rely on the mapping in JS to be correct.
+        // For now, directly cast. Robustness might involve checking if the value is a valid TextureFormat member.
+        if (@intToEnum(TextureFormat, format_val) == .rgba8unorm and format_val != @intFromEnum(TextureFormat.rgba8unorm)) { // Basic check
+             getAndLogWebGPUError("E26: Failed to get preferred canvas format or format is invalid."); // New Error Code E26
+             return error.OperationFailed;
+        }
+        webutils.log("Preferred canvas format obtained.");
+        return @intToEnum(TextureFormat, format_val);
+    }
+};
+
+// GPUCanvasContext methods
+pub fn canvasContextConfigure(context_handle: GPUCanvasContext, config: *const GPUCanvasConfiguration) !void {
+    webutils.log("GPUCanvasContext: Configuring (Zig FFI wrapper)...");
+    if (context_handle == 0) {
+        webutils.log("E00: Invalid GPUCanvasContext handle (0) passed to canvasContextConfigure.");
+        return error.InvalidHandle;
+    }
+    if (config.device == 0) {
+        webutils.log("E00: Invalid device handle (0) in GPUCanvasConfiguration.");
+        return error.InvalidDescriptor;
+    }
+    env_canvas_context_configure_js(context_handle, config);
+    // Check for JS errors if env_canvas_context_configure_js can set them
+    // getAndLogWebGPUError("Error during canvas context configuration: "); // Potentially
+    webutils.log("GPUCanvasContext configured.");
+}
+
+pub fn canvasContextUnconfigure(context_handle: GPUCanvasContext) !void {
+    webutils.log("GPUCanvasContext: Unconfiguring (Zig FFI wrapper)...");
+    if (context_handle == 0) {
+        webutils.log("E00: Invalid GPUCanvasContext handle (0) passed to canvasContextUnconfigure.");
+        return error.InvalidHandle;
+    }
+    env_canvas_context_unconfigure_js(context_handle);
+    webutils.log("GPUCanvasContext unconfigured.");
+}
+
+pub fn canvasContextGetCurrentTexture(context_handle: GPUCanvasContext) !Texture {
+    webutils.log("GPUCanvasContext: Getting current texture (Zig FFI wrapper)...");
+    if (context_handle == 0) {
+        webutils.log("E00: Invalid GPUCanvasContext handle (0) passed to canvasContextGetCurrentTexture.");
+        return error.InvalidHandle;
+    }
+    const texture_handle = env_canvas_context_get_current_texture_js(context_handle);
+    if (texture_handle == 0) {
+        getAndLogWebGPUError("E27: Failed to get current texture from canvas context (JS texture_handle is 0)."); // New Error Code E27
+        return error.OperationFailed;
+    }
+    webutils.log("Current texture obtained from GPUCanvasContext.");
+    return texture_handle;
+}
 
 pub fn deviceCreateTexture(device_handle: Device, descriptor: *const TextureDescriptor) !Texture {
     webutils.log("Creating WebGPU Texture (Zig FFI wrapper)...");
@@ -962,6 +1200,11 @@ pub const ComputePassDescriptor = extern struct {
     timestamp_writes_len: usize = 0,
 };
 
+pub const ComputePassTimestampLocation = enum(u32) { // Added as it was missing
+    beginning,
+    end,
+};
+
 // Compute Pass FFI
 pub extern "env" fn env_wgpu_command_encoder_begin_compute_pass_js(encoder_handle: CommandEncoder, descriptor_ptr: ?*const ComputePassDescriptor) callconv(.C) ComputePassEncoder;
 pub extern "env" fn env_wgpu_compute_pass_encoder_set_pipeline_js(pass_handle: ComputePassEncoder, pipeline_handle: ComputePipeline) void;
@@ -1121,8 +1364,16 @@ pub const RenderPassDescriptor = extern struct {
     color_attachments_len: usize,
     depth_stencil_attachment: ?*const RenderPassDepthStencilAttachment = null,
     occlusion_query_set: ?QuerySet = null,
-    timestamp_writes: ?*const RenderPassTimestampWrites = null,
+    timestamp_writes: ?*const RenderPassTimestampWrites = null, // This struct name matches spec
 };
+
+// RenderPassTimestampWrites struct itself was correct as per spec (QuerySet, optional beginning/end indices)
+// pub const RenderPassTimestampWrites = extern struct { 
+//     query_set: QuerySet,
+//     beginning_of_pass_write_index: ?u32 = null, // Optional GPUSize32
+//     end_of_pass_write_index: ?u32 = null,     // Optional GPUSize32
+// };
+// No change needed for RenderPassTimestampWrites struct definition, it's already correct.
 
 pub extern "env" fn env_wgpu_command_encoder_begin_render_pass_js(encoder_handle: CommandEncoder, descriptor_ptr: *const RenderPassDescriptor) callconv(.C) RenderPassEncoder;
 pub extern "env" fn env_wgpu_render_pass_encoder_set_pipeline_js(pass_handle: RenderPassEncoder, pipeline_handle: RenderPipeline) void;
@@ -1351,4 +1602,8 @@ pub fn deviceCreateSampler(device_handle: Device, descriptor: ?*const SamplerDes
     }
     webutils.log("Sampler created.");
     return sampler_handle;
+}
+
+pub fn deviceWatchLost(device_handle: Device) void {
+    env_device_get_lost_promise_js(device_handle);
 }
