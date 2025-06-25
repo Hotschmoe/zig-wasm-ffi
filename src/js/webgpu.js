@@ -273,6 +273,26 @@ export const webGPUNativeImports = {
         }
     },
 
+    env_wgpu_queue_write_buffer_js: function(queue_handle, buffer_handle, buffer_offset, data_ptr, data_size) {
+        const queue = globalWebGPU.queues[queue_handle];
+        if (!queue) {
+            return recordError(`Invalid queue handle for writeBuffer: ${queue_handle}`);
+        }
+        const buffer = globalWebGPU.buffers[buffer_handle];
+        if (!buffer) {
+            return recordError(`Invalid buffer handle for writeBuffer: ${buffer_handle}`);
+        }
+        if (!this.wasmMemory) {
+            return recordError("Wasm memory not available for writeBuffer.");
+        }
+        try {
+            const memory = new Uint8Array(this.wasmMemory.buffer, data_ptr, data_size);
+            queue.writeBuffer(buffer, buffer_offset, memory);
+        } catch (e) {
+            recordError(`Error in writeBuffer: ${e.message}`);
+        }
+    },
+
     // Get the last error message pointer and length for Zig
     env_wgpu_get_last_error_msg_ptr_js: function() {
         if (globalWebGPU.error) {
