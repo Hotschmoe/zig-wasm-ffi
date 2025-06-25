@@ -107,7 +107,11 @@ async function initWasm() {
             const moduleConfig = activeModules[moduleName];
             if (moduleConfig.setupJS) {
                 console.log(`[Main.js] Setting up ${moduleName}...`);
-                moduleConfig.setupJS(wasmExports, wasmMemory); 
+                if (moduleName === 'WebGPU') {
+                    moduleConfig.setupJS(wasmExports, wasmMemory, globalState.canvas);
+                } else {
+                    moduleConfig.setupJS(wasmExports, wasmMemory);
+                }
             }
         }
         

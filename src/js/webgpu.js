@@ -32,9 +32,13 @@ const globalWebGPU = {
 };
 
 // Function to be called by main.js after Wasm instantiation
-export function initWebGPUJs(exports, wasmMemory) {
+export function initWebGPUJs(exports, wasmMemory, canvas) {
     globalWebGPU.wasmExports = exports;
     globalWebGPU.memory = wasmMemory;
+    if (canvas) {
+        globalWebGPU.canvas = canvas;
+        console.log("[webgpu.js] Canvas element stored.");
+    }
     console.log("[webgpu.js] WebGPU FFI JS initialized with Wasm exports and memory.");
 }
 
@@ -1523,6 +1527,45 @@ export const webGPUNativeImports = {
             } else {
                 console.error("[webgpu.js] Wasm exports not ready for onSubmittedWorkDone setup failure callback.");
             }
+        }
+    },
+
+    env_wgpu_configure_canvas_js: function(device_handle, format_enum_val) {
+        const device = globalWebGPU.devices[device_handle];
+        if (!device) {
+            return recordError(`Invalid device handle for configureCanvas: ${device_handle}`);
+        }
+        if (!globalWebGPU.canvas) {
+            return recordError("Canvas not available to configure.");
+        }
+        try {
+            const context = globalWebGPU.canvas.getContext('webgpu');
+            if (!context) {
+                return recordError("Failed to get WebGPU context from canvas.");
+            }
+            const format = mapTextureFormatZigToJs(format_enum_val);
+            context.configure({
+                device: device,
+                format: format,
+                alphaMode: 'opaque',
+            });
+            globalWebGPU.canvasContext = context;
+            return 1; // Success
+        } catch (e) {
+            return recordError(`Error configuring canvas: ${e.message}`);
+        }
+    },
+
+    env_wgpu_get_current_texture_view_js: function() {
+        if (!globalWebGPU.canvasContext) {
+            return recordError("Canvas context not configured or available.");
+        }
+        try {
+            const texture = globalWebGPU.canvasContext.getCurrentTexture();
+            const view = texture.createView();
+            return storeTextureView(view);
+        } catch (e) {
+            return recordError(`Error getting current texture view: ${e.message}`);
         }
     },
 

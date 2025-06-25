@@ -82,7 +82,8 @@ export fn update_frame(delta_time_ms: f32) void {
         if (g_main_allocator) |allocator| {
             // Pass pointer to the global handler instance
             g_renderer = renderer.Renderer.init(allocator, &webgpu_handler.g_wgpu_handler_instance) catch |err| {
-                webutils.log("Failed to initialize Renderer: " ++ @errorName(err));
+                webutils.log("Failed to initialize Renderer: ");
+                webutils.log(@errorName(err));
                 renderer_init_failed = true;
                 // Allocator deinit is handled in _wasm_shutdown
                 webutils.log("Renderer init failed. Allocator will be deinitialized at shutdown.");
@@ -117,7 +118,8 @@ export fn update_frame(delta_time_ms: f32) void {
     // Call renderer's renderFrame
     if (g_renderer) |r| {
         r.renderFrame() catch |err| {
-            webutils.log("Error during renderer.renderFrame: " ++ @errorName(err));
+            webutils.log("Error during renderer.renderFrame: ");
+            webutils.log(@errorName(err));
             // Depending on the error, might need to stop rendering or attempt recovery.
         };
     } else if (renderer_initialized and !renderer_init_failed) {

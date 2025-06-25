@@ -7,6 +7,7 @@ pub const WebGPUHandler = struct {
     adapter: webgpu.Adapter,
     device: webgpu.Device,
     queue: webgpu.Queue,
+    canvas_configured: bool,
     initialization_status: InitializationStatus,
 
     // Public API methods that operate on an instance of WebGPUHandler
@@ -57,6 +58,11 @@ pub const WebGPUHandler = struct {
         return .bgra8unorm;
     }
 
+    pub fn getCurrentTextureView(self: *const WebGPUHandler) !webgpu.TextureView {
+        _ = self;
+        return webgpu.getCurrentTextureView();
+    }
+
     pub fn deinit(self: *WebGPUHandler) void {
         webutils.log("[WebGPUHandler] Deinitializing WebGPU (instance)..._fields_before_release: A(" ++ "TODO_INT_TO_STRING" ++ ") D(" ++ "TODO_INT_TO_STRING" ++ ") Q(" ++ "TODO_INT_TO_STRING" ++ ")"); // TODO: Format numbers
         if (self.queue != 0) {
@@ -84,6 +90,7 @@ pub var g_wgpu_handler_instance: WebGPUHandler = WebGPUHandler{
     .adapter = 0,
     .device = 0,
     .queue = 0,
+    .canvas_configured = false,
     .initialization_status = .pending,
 };
 
@@ -140,7 +147,18 @@ pub export fn zig_receive_device(device_handle: webgpu.Device, status: u32) void
         if (q_handle_optional) |q_handle| {
             g_wgpu_handler_instance.queue = q_handle;
             g_wgpu_handler_instance.initialization_status = .queue_success;
-            webutils.log("[WebGPUHandler] Queue obtained successfully. Initialization complete.");
+            webutils.log("[WebGPUHandler] Queue obtained successfully. Configuring canvas...");
+
+            const canvas_format = g_wgpu_handler_instance.getPreferredCanvasFormat() orelse .bgra8unorm;
+            webgpu.configureCanvas(device_handle, canvas_format) catch |err| {
+                webutils.log("Failed to configure canvas");
+                webgpu.getAndLogWebGPUError(@errorName(err));
+                g_wgpu_handler_instance.initialization_status = .failed;
+                return;
+            };
+            g_wgpu_handler_instance.canvas_configured = true;
+
+            webutils.log("[WebGPUHandler] Canvas configured. Initialization complete.");
             g_wgpu_handler_instance.initialization_status = .complete;
         } else {
             // This case means deviceGetQueue FFI call succeeded (no Zig error), but JS returned null/0 for queue.

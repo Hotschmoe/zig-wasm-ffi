@@ -238,13 +238,17 @@ pub const TextureAspect = enum(u32) {
 
 pub const TextureViewDescriptor = extern struct {
     label: ?[*:0]const u8,
-    format: ?TextureFormat = null,
-    dimension: ?TextureDimension = null, // NOTE: This should ideally be TextureViewDimension if it differs
+    format: TextureFormat,
+    format_is_present: bool,
+    dimension: TextureDimension, // NOTE: This should ideally be TextureViewDimension if it differs
+    dimension_is_present: bool,
     aspect: TextureAspect = .all,
     base_mip_level: u32 = 0,
-    mip_level_count: ?u32 = null,
+    mip_level_count: u32,
+    mip_level_count_is_present: bool,
     base_array_layer: u32 = 0,
-    array_layer_count: ?u32 = null,
+    array_layer_count: u32,
+    array_layer_count_is_present: bool,
 };
 
 // Bind Group Layout Related Enums and Structs
@@ -327,14 +331,14 @@ pub const BindGroupLayoutEntry = extern struct { // Corresponds to GPUBindGroupL
 
 pub const BindGroupLayoutDescriptor = extern struct {
     label: ?[*:0]const u8 = null,
-    entries: [*]const BindGroupLayoutEntry,
+    entries: ?[*]const BindGroupLayoutEntry,
     entries_len: usize,
 };
 
 // Pipeline Layout
 pub const PipelineLayoutDescriptor = extern struct {
     label: ?[*:0]const u8 = null,
-    bind_group_layouts: [*]const BindGroupLayout,
+    bind_group_layouts: ?[*]const BindGroupLayout,
     bind_group_layouts_len: usize,
 };
 
@@ -353,7 +357,7 @@ pub const ProgrammableStageDescriptor = extern struct {
 
 pub const ComputePipelineDescriptor = extern struct {
     label: ?[*:0]const u8 = null,
-    layout: ?PipelineLayout = null, // Optional: if null, auto-layout is used
+    layout: PipelineLayout, // Optional: if null, auto-layout is used
     compute: ProgrammableStageDescriptor,
 };
 
@@ -407,7 +411,7 @@ pub const GPUBlendFactor = enum(u32) { zero = 0, one = 1, src = 2, one_minus_src
 pub const VertexBufferLayout = extern struct { // Corresponds to GPUVertexBufferLayout
     array_stride: u64, // GPUSize64
     step_mode: GPUVertexStepMode = .vertex,
-    attributes: [*]const VertexAttribute,
+    attributes: ?[*]const VertexAttribute,
     attributes_len: usize,
 };
 
@@ -428,7 +432,8 @@ pub const VertexState = extern struct { // Corresponds to GPUVertexState
 
 pub const PrimitiveState = extern struct { // Corresponds to GPUPrimitiveState
     topology: GPUPrimitiveTopology = .triangle_list,
-    strip_index_format: ?GPUIndexFormat = null,
+    strip_index_format: GPUIndexFormat,
+    strip_index_format_is_present: bool,
     front_face: GPUFrontFace = .ccw,
     cull_mode: GPUCullMode = .none,
     // unclipped_depth: bool = false, // Requires "depth-clip-control" feature
@@ -490,15 +495,21 @@ pub const FragmentState = extern struct { // Corresponds to GPUFragmentState
     entry_point: ?[*:0]const u8,
     constants: ?[*]const ConstantEntry = null,
     constants_len: usize = 0,
-    targets: [*]const ColorTargetState,
+    targets: ?[*]const ColorTargetState,
     targets_len: usize,
 };
 
 pub const RenderPipelineDescriptor = extern struct {
     label: ?[*:0]const u8 = null,
-    layout: ?PipelineLayout = null,
+    layout: PipelineLayout,
     vertex: VertexState,
-    primitive: PrimitiveState = .{},
+    primitive: PrimitiveState = .{
+        .topology = .triangle_list,
+        .strip_index_format = .uint16, // Default value, not used if not present
+        .strip_index_format_is_present = false,
+        .front_face = .ccw,
+        .cull_mode = .none,
+    },
     depth_stencil: ?*const DepthStencilState = null,
     multisample: MultisampleState = .{},
     fragment: ?*const FragmentState = null,
@@ -532,6 +543,9 @@ pub extern "env" fn env_wgpu_device_create_bind_group_js(device_handle: Device, 
 pub extern "env" fn env_wgpu_device_create_pipeline_layout_js(device_handle: Device, descriptor_ptr: *const PipelineLayoutDescriptor) callconv(.C) PipelineLayout;
 pub extern "env" fn env_wgpu_device_create_compute_pipeline_js(device_handle: Device, descriptor_ptr: *const ComputePipelineDescriptor) callconv(.C) ComputePipeline;
 pub extern "env" fn env_wgpu_device_create_render_pipeline_js(device_handle: Device, descriptor_ptr: *const RenderPipelineDescriptor) callconv(.C) RenderPipeline;
+
+pub extern "env" fn env_wgpu_configure_canvas_js(device_handle: Device, format: u32) callconv(.C) u32;
+pub extern "env" fn env_wgpu_get_current_texture_view_js() callconv(.C) TextureView;
 
 // Error Handling & Release
 pub extern "env" fn env_wgpu_get_last_error_msg_ptr_js() u32;
@@ -907,7 +921,7 @@ pub const BindGroupEntry = extern struct {
 pub const BindGroupDescriptor = extern struct {
     label: ?[*:0]const u8 = null,
     layout: BindGroupLayout,
-    entries: [*]const BindGroupEntry,
+    entries: ?[*]const BindGroupEntry,
     entries_len: usize,
 };
 
@@ -1088,7 +1102,8 @@ pub const Color = extern struct { // Corresponds to GPUColor { r: f64, g: f64, b
 
 pub const RenderPassColorAttachment = extern struct { // Corresponds to GPURenderPassColorAttachment
     view: TextureView,
-    resolve_target: ?TextureView = null,
+    resolve_target: TextureView,
+    resolve_target_is_present: bool,
     clear_value: ?*const Color = null,
     load_op: GPULoadOp,
     store_op: GPUStoreOp,
@@ -1111,16 +1126,19 @@ pub const RenderPassDepthStencilAttachment = extern struct { // Corresponds to G
 
 pub const RenderPassTimestampWrites = extern struct { // Corresponds to GPURenderPassTimestampWrites
     query_set: QuerySet,
-    beginning_of_pass_write_index: ?u32 = null,
-    end_of_pass_write_index: ?u32 = null,
+    beginning_of_pass_write_index: u32,
+    beginning_of_pass_write_index_is_present: bool,
+    end_of_pass_write_index: u32,
+    end_of_pass_write_index_is_present: bool,
 };
 
 pub const RenderPassDescriptor = extern struct {
     label: ?[*:0]const u8 = null,
-    color_attachments: [*]const RenderPassColorAttachment,
+    color_attachments: ?[*]const RenderPassColorAttachment,
     color_attachments_len: usize,
     depth_stencil_attachment: ?*const RenderPassDepthStencilAttachment = null,
-    occlusion_query_set: ?QuerySet = null,
+    occlusion_query_set: QuerySet,
+    occlusion_query_set_is_present: bool,
     timestamp_writes: ?*const RenderPassTimestampWrites = null,
 };
 
@@ -1328,7 +1346,8 @@ pub const SamplerDescriptor = extern struct {
     mipmap_filter: GPUMipmapFilterMode = .nearest,
     lod_min_clamp: f32 = 0.0,
     lod_max_clamp: f32 = 32.0,
-    compare: ?GPUCompareFunction = null, // Optional: only for comparison samplers
+    compare: GPUCompareFunction,
+    compare_is_present: bool,
     max_anisotropy: u16 = 1, // GPUSize16, typically 1 or higher if anisotropic filtering is used.
 };
 
@@ -1351,4 +1370,20 @@ pub fn deviceCreateSampler(device_handle: Device, descriptor: ?*const SamplerDes
     }
     webutils.log("Sampler created.");
     return sampler_handle;
+}
+
+pub fn configureCanvas(device: Device, format: TextureFormat) !void {
+    if (env_wgpu_configure_canvas_js(device, @intFromEnum(format)) == 0) {
+        getAndLogWebGPUError("Failed to configure canvas: ");
+        return error.OperationFailed;
+    }
+}
+
+pub fn getCurrentTextureView() !TextureView {
+    const view = env_wgpu_get_current_texture_view_js();
+    if (view == 0) {
+        getAndLogWebGPUError("Failed to get current texture view: ");
+        return error.OperationFailed;
+    }
+    return view;
 }
