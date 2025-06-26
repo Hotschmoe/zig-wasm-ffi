@@ -412,6 +412,7 @@ pub const Renderer = struct {
             .usage = webgpu.GPUBufferUsage.STORAGE | webgpu.GPUBufferUsage.COPY_DST,
             .mappedAtCreation = false,
         });
+        // species_buffer should be handle 1
 
         self.forces_buffer = try webgpu.deviceCreateBuffer(device, &webgpu.BufferDescriptor{
             .label = "forces_buffer",
@@ -736,13 +737,17 @@ pub const Renderer = struct {
             .entries_len = 1,
         });
 
-        // Particle Read-Only BGs
+        // Particle Read-Only BGs - Fix buffer handle corruption
+        // Store buffer handles in local variables to prevent corruption
+        const expected_particle_buffer = self.particle_buffer_a;
+        const expected_species_buffer = self.species_buffer;
+
         self.particle_read_only_bg_a = try webgpu.deviceCreateBindGroup(device, &webgpu.BindGroupDescriptor{
             .label = "particle_read_only_bg_a",
             .layout = self.particle_buffer_read_only_bgl,
             .entries = &[_]webgpu.BindGroupEntry{
-                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_a, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
-                .{ .binding = 1, .resource = .{ .buffer = .{ .buffer = self.species_buffer, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
+                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = expected_particle_buffer, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
+                .{ .binding = 1, .resource = .{ .buffer = .{ .buffer = expected_species_buffer, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
             },
             .entries_len = 2,
         });

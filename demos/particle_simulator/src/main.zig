@@ -35,22 +35,29 @@ pub export fn _start() void {
 
     webutils.log("WebGPU Handler initGlobalHandler() call made. Check console for async callback status.");
 
-    // Debug printing for struct offsets - using webgpu_ffi.log
-    webutils.log("--- WebGPU Struct Offsets (main.zig) ---");
-    // Manual formatting for offsets - this is cumbersome without std.fmt
-    // Consider a very basic int_to_string helper if this is needed extensively,
-    // or accept that logs will be more verbose/separate.
-    webutils.log("BufferDescriptor.label offset: TODO_log_offset"); // @offsetOf(webgpu_ffi.BufferDescriptor, "label")
-    webutils.log("BufferDescriptor.size offset: TODO_log_offset"); // @offsetOf(webgpu_ffi.BufferDescriptor, "size")
-    webutils.log("BufferDescriptor.usage offset: TODO_log_offset"); // @offsetOf(webgpu_ffi.BufferDescriptor, "usage")
-    webutils.log("BufferDescriptor.mappedAtCreation offset: TODO_log_offset"); // @offsetOf(webgpu_ffi.BufferDescriptor, "mappedAtCreation")
-    webutils.log(" ---- ");
-    webutils.log("ShaderModuleDescriptor.label offset: TODO_log_offset"); // @offsetOf(webgpu_ffi.ShaderModuleDescriptor, "label")
-    webutils.log("ShaderModuleDescriptor.wgsl_code offset: TODO_log_offset"); // @offsetOf(webgpu_ffi.ShaderModuleDescriptor, "wgsl_code")
-    webutils.log(" ---- ");
-    webutils.log("ShaderModuleWGSLDescriptor.code_ptr offset: TODO_log_offset"); // @offsetOf(webgpu_ffi.ShaderModuleWGSLDescriptor, "code_ptr")
-    webutils.log("ShaderModuleWGSLDescriptor.code_len offset: TODO_log_offset"); // @offsetOf(webgpu_ffi.ShaderModuleWGSLDescriptor, "code_len")
-    webutils.log("--- End WebGPU Struct Offsets ---");
+    // Debug printing for struct sizes and offsets
+    webutils.log("--- WebGPU Struct Sizes (main.zig) ---");
+
+    // Simple way to print numbers by checking ranges
+    const bindgroup_entry_size = @sizeOf(webgpu_ffi.BindGroupEntry);
+    if (bindgroup_entry_size == 24) webutils.log("BindGroupEntry size: 24 bytes");
+    if (bindgroup_entry_size == 28) webutils.log("BindGroupEntry size: 28 bytes");
+    if (bindgroup_entry_size == 32) webutils.log("BindGroupEntry size: 32 bytes");
+    if (bindgroup_entry_size == 44) webutils.log("BindGroupEntry size: 44 bytes");
+    if (bindgroup_entry_size == 48) webutils.log("BindGroupEntry size: 48 bytes");
+    if (bindgroup_entry_size > 48) webutils.log("BindGroupEntry size: > 48 bytes");
+
+    const buffer_binding_size = @sizeOf(webgpu_ffi.BufferBinding);
+    if (buffer_binding_size == 20) webutils.log("BufferBinding size: 20 bytes");
+    if (buffer_binding_size == 24) webutils.log("BufferBinding size: 24 bytes");
+    if (buffer_binding_size == 32) webutils.log("BufferBinding size: 32 bytes");
+
+    const resource_union_size = @sizeOf(webgpu_ffi.BindGroupEntry.Resource);
+    if (resource_union_size == 20) webutils.log("Resource union size: 20 bytes");
+    if (resource_union_size == 24) webutils.log("Resource union size: 24 bytes");
+    if (resource_union_size == 32) webutils.log("Resource union size: 32 bytes");
+
+    webutils.log("--- End WebGPU Struct Sizes ---");
     // For now, I've replaced the dynamic offset logging with placeholders ("TODO_log_offset")
     // because implementing a robust int-to-string without std for wasm32-freestanding
     // is a bit involved for this quick fix. The key is removing `std.debug.print`.

@@ -379,11 +379,15 @@ export const webGPUNativeImports = {
             const memoryView = new DataView(this.wasmMemory.buffer);
             // Read BufferDescriptor from Wasm memory
             // struct BufferDescriptor { label: ?[*:0]const u8, size: u64, usage: u32, mappedAtCreation: bool }
-            // For simplicity, assuming label is null for now. A full implementation would read the pointer.
-            // const label_ptr = memoryView.getUint32(descriptor_ptr, true); // Assuming pointer size is 4
-            const size = memoryView.getBigUint64(descriptor_ptr + 8, true); // Offset by label_ptr (assuming 4 or 8) and then size of ptr (8 for ?ptr)
-            const usage = memoryView.getUint32(descriptor_ptr + 16, true);
-            const mappedAtCreation = memoryView.getUint8(descriptor_ptr + 20, true) !== 0;
+            // On wasm32, u64 requires 8-byte alignment, so there's padding after the 4-byte pointer:
+            // offset 0: label (4 bytes)
+            // offset 4: padding (4 bytes) 
+            // offset 8: size (8 bytes)
+            // offset 16: usage (4 bytes)
+            // offset 20: mappedAtCreation (1 byte)
+            const size = memoryView.getBigUint64(descriptor_ptr + 8, true); // 8-byte aligned offset
+            const usage = memoryView.getUint32(descriptor_ptr + 16, true); // After size field
+            const mappedAtCreation = memoryView.getUint8(descriptor_ptr + 20, true) !== 0; // After usage field
 
             const jsDescriptor = {
                 size: Number(size), // GPUSize64 can be a Number in JS if not exceeding MAX_SAFE_INTEGER
@@ -393,7 +397,9 @@ export const webGPUNativeImports = {
             };
 
             const buffer = device.createBuffer(jsDescriptor);
-            return storeBuffer(buffer);
+            const handle = storeBuffer(buffer);
+            console.log(`[webgpu.js] Buffer created with handle: ${handle}, size: ${Number(size)}, usage: ${usage}, mappedAtCreation: ${mappedAtCreation}`);
+            return handle;
         } catch (e) {
             const errorMsg = `Error in deviceCreateBuffer: ${e.message}`;
             globalWebGPU.error = errorMsg;
@@ -667,6 +673,7 @@ export const webGPUNativeImports = {
                 let current_entry_ptr_u32 = entry_offset_bytes / 4;
 
                 jsEntry.binding = wasmMemoryU32[current_entry_ptr_u32++];
+                console.log(`[webgpu.js] Reading entry ${i}: offset_bytes=${entry_offset_bytes}, offset_u32=${current_entry_ptr_u32-1}, binding=${jsEntry.binding}`);
 
                 // The resource is a union. The Zig code must tell us which field of the union is active.
                 // For now, we assume the BindGroupLayout provides enough context to know what type is expected.
@@ -697,41 +704,51 @@ export const webGPUNativeImports = {
                 }
 
                 if (bglEntry.buffer !== undefined) { // It's a buffer binding
-                    const buffer_handle = wasmMemoryU32[current_entry_ptr_u32 + 0]; // struct BufferBinding { buffer: Buffer (u32) ...}
-                    const buffer_offset_lo = wasmMemoryU32[current_entry_ptr_u32 + 1]; // offset: u64 (lower 32 bits)
-                    const buffer_offset_hi = wasmMemoryU32[current_entry_ptr_u32 + 2]; // offset: u64 (higher 32 bits)
-                    const buffer_size_lo = wasmMemoryU32[current_entry_ptr_u32 + 3]; // size: u64 (lower 32 bits)
-                    const buffer_size_hi = wasmMemoryU32[current_entry_ptr_u32 + 4]; // size: u64 (higher 32 bits)
+                    // Fix: Resource union starts after binding field (offset 4 bytes)
+                    // BindGroupEntry layout: binding: u32 (0-3), resource: Resource (4-27)
+                    // BufferBinding layout within resource: buffer: u32 (0-3), padding: u32 (4-7), offset: u64 (8-15), size: u64 (16-23)
+                    const resource_offset = current_entry_ptr_u32 + 1; // +1 u32 = +4 bytes for resource union
+                    const buffer_handle = wasmMemoryU32[resource_offset + 0]; // buffer: u32 at resource offset 0
+                    // Skip padding at offset 1 (4-7 bytes)  
+                    const buffer_offset_lo = wasmMemoryU32[resource_offset + 2]; // offset: u64 low at offset 8
+                    const buffer_offset_hi = wasmMemoryU32[resource_offset + 3]; // offset: u64 high at offset 12
+                    const buffer_size_lo = wasmMemoryU32[resource_offset + 4]; // size: u64 low at offset 16
+                    const buffer_size_hi = wasmMemoryU32[resource_offset + 5]; // size: u64 high at offset 20
 
+                    console.log(`[webgpu.js] Bind group entry binding ${jsEntry.binding}: buffer_handle=${buffer_handle}, offset_lo=${buffer_offset_lo}, offset_hi=${buffer_offset_hi}, size_lo=${buffer_size_lo}, size_hi=${buffer_size_hi}`);
+                    
+                    // Enhanced error checking for buffer handle 0
+                    if (buffer_handle === 0) {
+                        return recordError(`Invalid buffer handle 0 at binding ${jsEntry.binding}. Buffer handles must be >= 1. This indicates a Zig-side initialization issue where a BufferBinding.buffer field was not properly set.`);
+                    }
+                    
                     const gpuBuffer = globalWebGPU.buffers[buffer_handle];
-                    if (!gpuBuffer) return recordError(`GPUBuffer not found for handle ${buffer_handle} at binding ${jsEntry.binding}`);
+                    if (!gpuBuffer) {
+                        const availableHandles = globalWebGPU.buffers.map((buf, idx) => idx).filter(idx => idx > 0 && globalWebGPU.buffers[idx]);
+                        return recordError(`GPUBuffer not found for handle ${buffer_handle} at binding ${jsEntry.binding}. Available handles: [${availableHandles.join(', ')}]`);
+                    }
                     jsEntry.resource = { 
                         buffer: gpuBuffer,
                         offset: Number(BigInt(buffer_offset_hi) << 32n | BigInt(buffer_offset_lo)),
-                        // Size is optional in JS. Handle Zig's 'undefined' for whole buffer.
-                        // Zig uses `undefined` for size, which is a large u64. Max u64 maps to undefined size.
-                        size: (buffer_size_hi === 0xFFFFFFFF && buffer_size_lo === 0xFFFFFFFF) ? undefined : Number(BigInt(buffer_size_hi) << 32n | BigInt(buffer_size_lo)),
+                        // Handle WHOLE_SIZE sentinel - check if this is the max u64 value (Zig's WHOLE_SIZE)
+                        size: (buffer_size_hi === 0xFFFFFFFF) ? undefined : Number(BigInt(buffer_size_hi) << 32n | BigInt(buffer_size_lo)),
                     };
-                    entry_offset_bytes += 4 + 8 + 8; // binding (u32) + BufferBinding (handle u32, offset u64, size u64) = 4 + 4 + 8 + 8, but handle is read with binding.
-                                               // Correct: binding (u32) + resource (BufferBinding is 20 bytes: u32+u64+u64)
-                                               // Offset from start of BindGroupEntry: binding is 4 bytes. Resource starts after.
-                                               // So, current_entry_ptr_u32 points to start of Resource union.
-                                               // BufferBinding: buffer_handle (u32), offset_lo, offset_hi, size_lo, size_hi (5 * u32 = 20 bytes)
-                                               // Total size of BindGroupEntry with BufferBinding: 4 (binding) + 20 (resource) = 24 bytes.
-                    entry_offset_bytes += 24; // Advance by size of BindGroupEntry containing BufferBinding
+                    // FIX: BindGroupEntry size is 32 bytes (binding u32 + resource union 24 bytes + padding)
+                    // We should advance by the full struct size, not calculate individual field sizes
+                    entry_offset_bytes += 32; // Advance by size of BindGroupEntry struct
                 } else if (bglEntry.texture !== undefined) { // It's a texture view binding
                     const texture_view_handle = wasmMemoryU32[current_entry_ptr_u32 + 0]; // struct TextureBinding { texture_view: TextureView (u32) }
                     const gpuTextureView = globalWebGPU.textureViews[texture_view_handle];
                     if (!gpuTextureView) return recordError(`GPUTextureView not found for handle ${texture_view_handle} at binding ${jsEntry.binding}`);
                     jsEntry.resource = gpuTextureView;
-                    // Total size of BindGroupEntry with TextureBinding: 4 (binding) + 4 (resource) = 8 bytes.
-                    entry_offset_bytes += 8;
+                    // FIX: Use consistent BindGroupEntry struct size of 32 bytes
+                    entry_offset_bytes += 32; // Advance by size of BindGroupEntry struct
                 } else if (bglEntry.sampler !== undefined) { // It's a sampler binding - Placeholder
                     // const sampler_handle = wasmMemoryU32[current_entry_ptr_u32 + 0]; // struct SamplerBinding { sampler: Sampler (u32) }
                     // const gpuSampler = globalWebGPU.samplers[sampler_handle];
                     // if (!gpuSampler) return recordError(`GPUSampler not found for handle ${sampler_handle} at binding ${jsEntry.binding}`);
                     // jsEntry.resource = gpuSampler;
-                    // entry_offset_bytes += 8; // 4 (binding) + 4 (resource)
+                    // entry_offset_bytes += 24; // 4 (binding) + 20 (resource union) = 24 bytes
                     return recordError(`Sampler binding not yet fully implemented in env_wgpu_device_create_bind_group_js for binding ${jsEntry.binding}`);
                 } else {
                     return recordError(`Unknown resource type in BindGroupLayout for binding ${jsEntry.binding}`);
