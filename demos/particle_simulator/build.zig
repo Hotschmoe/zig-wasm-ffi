@@ -120,7 +120,7 @@ pub fn build(b: *std.Build) !void {
     }
 
     // --- Test Browser Step ---
-    const test_browser_cmd = b.addSystemCommand(&[_][]const u8{ "python", "test_browser.py" });
+    const test_browser_cmd = b.addSystemCommand(&[_][]const u8{ "node", "test_browser.js" });
     test_browser_cmd.step.dependOn(&copy_wasm.step);
     test_browser_cmd.step.dependOn(&copy_web_assets.step);
     for (all_copy_js_glue_steps.items) |js_copy_step| {

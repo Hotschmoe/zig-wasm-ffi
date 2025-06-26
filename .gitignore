@@ -41,6 +41,10 @@
 zig-out/
 dist/
 
+# Node Modules
+node_modules/
+**/node_modules/
+
 # Local Archive and Examples
 archive/
 
