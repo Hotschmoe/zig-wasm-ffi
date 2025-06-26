@@ -480,7 +480,7 @@ pub const Renderer = struct {
             s.color[2] = @as(f32, @floatFromInt((i + 2) % 3)) * 0.5 + 0.2;
             s.color[3] = 1.0;
         }
-        try webgpu.queueWriteBuffer(queue, self.species_buffer, 0, mem.sliceAsBytes(species_data));
+        webgpu.queueWriteBuffer(queue, self.species_buffer, 0, @sizeOf(Species) * self.species_count, species_data.ptr);
 
         // Forces Data (example: random forces)
         const forces_data = try self.allocator.alloc(Force, self.species_count * self.species_count);
@@ -492,7 +492,7 @@ pub const Renderer = struct {
             f.collision_strength = prng_forces.nextF32() * 20.0;
             f.collision_radius = prng_forces.nextF32() * f.radius * 0.5;
         }
-        try webgpu.queueWriteBuffer(queue, self.forces_buffer, 0, mem.sliceAsBytes(forces_data));
+        webgpu.queueWriteBuffer(queue, self.forces_buffer, 0, @sizeOf(Force) * self.species_count * self.species_count, forces_data.ptr);
 
         // Particle Data (random initial state)
         const particle_data = try self.allocator.alloc(Particle, self.particle_count);
@@ -508,7 +508,7 @@ pub const Renderer = struct {
             p.vy = (prng.nextF32() - 0.5) * 2.0 * INITIAL_VELOCITY;
             p.species_id = @as(f32, @floatFromInt(prng.nextRangeU32(0, self.species_count - 1)));
         }
-        try webgpu.queueWriteBuffer(queue, self.particle_buffer_a, 0, mem.sliceAsBytes(particle_data));
+        webgpu.queueWriteBuffer(queue, self.particle_buffer_a, 0, @sizeOf(Particle) * self.particle_count, particle_data.ptr);
         // particle_buffer_b doesn't need initial data, it's a destination first.
 
         // Bin Prefix Sum Step Size Buffer (powers of 2)
@@ -525,7 +525,7 @@ pub const Renderer = struct {
                 }
                 step_data_aligned[i * 64] = val; // 2^i
             }
-            try webgpu.queueWriteBuffer(queue, self.bin_prefix_sum_step_size_buffer, 0, mem.sliceAsBytes(step_data_aligned));
+            webgpu.queueWriteBuffer(queue, self.bin_prefix_sum_step_size_buffer, 0, @sizeOf(u32) * prefix_sum_iterations_calc * 64, step_data_aligned.ptr);
         }
 
         // Camera & Sim Options with some defaults (can be updated per frame)
@@ -535,7 +535,7 @@ pub const Renderer = struct {
             .pixels_per_unit = 1.0,
             ._padding = .{ 0.0, 0.0, 0.0 }, // Adjusted padding to 3 f32s
         };
-        try webgpu.queueWriteBuffer(queue, self.camera_buffer, 0, mem.asBytes(&initial_cam_data));
+        webgpu.queueWriteBuffer(queue, self.camera_buffer, 0, @sizeOf(CameraUniforms), &initial_cam_data);
 
         const initial_sim_options = SimulationOptionsUniforms{
             .left = -half_width,
@@ -558,7 +558,7 @@ pub const Renderer = struct {
             ._padding2 = 0,
             ._padding3 = 0,
         };
-        try webgpu.queueWriteBuffer(queue, self.simulation_options_buffer, 0, mem.asBytes(&initial_sim_options));
+        webgpu.queueWriteBuffer(queue, self.simulation_options_buffer, 0, @sizeOf(SimulationOptionsUniforms), &initial_sim_options);
     }
 
     fn createPlaceholderTextures(self: *Renderer, device: webgpu.Device) !void {

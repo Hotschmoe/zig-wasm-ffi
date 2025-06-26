@@ -534,7 +534,7 @@ pub extern "env" fn env_wgpu_adapter_request_device_js(adapter_handle: Adapter) 
 // Synchronous Resource Creation & Operations (Zig -> JS)
 pub extern "env" fn env_wgpu_device_get_queue_js(device_handle: Device) callconv(.C) Queue;
 pub extern "env" fn env_wgpu_device_create_buffer_js(device_handle: Device, descriptor_ptr: *const BufferDescriptor) callconv(.C) Buffer;
-pub extern "env" fn env_wgpu_queue_write_buffer_js(queue_handle: Queue, buffer_handle: Buffer, buffer_offset: u64, data_ptr: [*]const u8, data_size: usize) callconv(.C) void;
+pub extern "env" fn env_wgpu_queue_write_buffer_js(queue_handle: Queue, buffer_handle: Buffer, buffer_offset: u64, data_size: u64, data_ptr: usize) callconv(.C) void;
 pub extern "env" fn env_wgpu_device_create_shader_module_js(device_handle: Device, descriptor_ptr: *const ShaderModuleDescriptor) callconv(.C) ShaderModule;
 pub extern "env" fn env_wgpu_device_create_texture_js(device_handle: Device, descriptor_ptr: *const TextureDescriptor) callconv(.C) Texture;
 pub extern "env" fn env_wgpu_texture_create_view_js(texture_handle: Texture, descriptor_ptr: ?*const TextureViewDescriptor) callconv(.C) TextureView;
@@ -690,15 +690,15 @@ pub fn deviceCreateBuffer(device_handle: Device, descriptor: *const BufferDescri
     return buffer_handle;
 }
 
-pub fn queueWriteBuffer(queue_handle: Queue, buffer_handle: Buffer, buffer_offset: u64, data: []const u8) !void {
+pub fn queueWriteBuffer(queue: Queue, buffer: Buffer, buffer_offset: u64, data_size: u64, data: *const anyopaque) callconv(.C) void {
     webutils.log(
         "Writing to WebGPU Buffer (Zig FFI wrapper).",
     );
-    if (queue_handle == 0 or buffer_handle == 0) {
+    if (queue == 0 or buffer == 0) {
         webutils.log("E00: Invalid handle (0) for queue or buffer passed to queueWriteBuffer.");
-        return error.InvalidHandle;
+        return;
     }
-    env_wgpu_queue_write_buffer_js(queue_handle, buffer_handle, buffer_offset, data.ptr, data.len);
+    env_wgpu_queue_write_buffer_js(queue, buffer, buffer_offset, data_size, @intFromPtr(data));
     // TODO: Check for errors after write? WebGPU doesn't throw sync errors for queue ops usually.
     webutils.log("Buffer write operation submitted.");
 }

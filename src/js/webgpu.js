@@ -273,7 +273,7 @@ export const webGPUNativeImports = {
         }
     },
 
-    env_wgpu_queue_write_buffer_js: function(queue_handle, buffer_handle, buffer_offset, data_ptr, data_size) {
+    env_wgpu_queue_write_buffer_js: function(queue_handle, buffer_handle, buffer_offset, data_size, data_ptr) {
         const queue = globalWebGPU.queues[queue_handle];
         if (!queue) {
             return recordError(`Invalid queue handle for writeBuffer: ${queue_handle}`);
@@ -286,8 +286,8 @@ export const webGPUNativeImports = {
             return recordError("Wasm memory not available for writeBuffer.");
         }
         try {
-            const memory = new Uint8Array(this.wasmMemory.buffer, data_ptr, data_size);
-            queue.writeBuffer(buffer, buffer_offset, memory);
+            const memory = new Uint8Array(this.wasmMemory.buffer, data_ptr, Number(data_size));
+            queue.writeBuffer(buffer, Number(buffer_offset), memory);
         } catch (e) {
             recordError(`Error in writeBuffer: ${e.message}`);
         }
@@ -424,7 +424,7 @@ export const webGPUNativeImports = {
             // Or, more accurately, label is the first field.
             // For now, assume label handling matches createBuffer (i.e., label is skipped or needs readStringFromWasm)
             const label_ptr_offset = 0; // Placeholder
-            const wgsl_code_descriptor_field_offset = 8; // Offset assuming label is a ?[*c]u8 (typically 4 or 8 bytes for pointer, let's assume 8 for safety with nullable pointers)
+            const wgsl_code_descriptor_field_offset = 4; // Offset assuming label is a ?[*c]u8 (4 bytes for wasm32 pointer)
 
             const wgsl_code_descriptor_ptr = descriptor_ptr + wgsl_code_descriptor_field_offset; 
             const code_ptr = memoryView.getUint32(wgsl_code_descriptor_ptr + 0, true); 
@@ -463,28 +463,28 @@ export const webGPUNativeImports = {
         try {
             const memoryView = new DataView(this.wasmMemory.buffer);
             // TextureDescriptor layout from webgpu.zig:
-            // label: ?[*:0]const u8, (offset 0, size 8 for ?ptr)
-            // size: Extent3D, (offset 8)
-            //    width: u32, (offset 8 + 0 = 8)
-            //    height: u32, (offset 8 + 4 = 12)
-            //    depth_or_array_layers: u32, (offset 8 + 8 = 16)
-            // mip_level_count: u32, (offset 8 + 12 = 20)
-            // sample_count: u32, (offset 24)
-            // dimension: TextureDimension (u32 enum), (offset 28)
-            // format: TextureFormat (u32 enum), (offset 32)
-            // usage: u32 (GPUTextureUsageFlags), (offset 36)
-            // view_formats: ?[*]const TextureFormat = null, (offset 40, size 8 for ?ptr)
-            // view_formats_count: usize = 0, (offset 48, size 4 for usize in wasm32)
+            // label: ?[*:0]const u8, (offset 0, size 4 for ?ptr in wasm32)
+            // size: Extent3D, (offset 4)
+            //    width: u32, (offset 4 + 0 = 4)
+            //    height: u32, (offset 4 + 4 = 8)
+            //    depth_or_array_layers: u32, (offset 4 + 8 = 12)
+            // mip_level_count: u32, (offset 4 + 12 = 16)
+            // sample_count: u32, (offset 20)
+            // dimension: TextureDimension (u32 enum), (offset 24)
+            // format: TextureFormat (u32 enum), (offset 28)
+            // usage: u32 (GPUTextureUsageFlags), (offset 32)
+            // view_formats: ?[*]const TextureFormat = null, (offset 36, size 4 for ?ptr)
+            // view_formats_count: usize = 0, (offset 40, size 4 for usize in wasm32)
 
             // Skipping label for now
-            const size_width = memoryView.getUint32(descriptor_ptr + 8, true);
-            const size_height = memoryView.getUint32(descriptor_ptr + 12, true);
-            const size_depth_or_array_layers = memoryView.getUint32(descriptor_ptr + 16, true);
-            const mip_level_count = memoryView.getUint32(descriptor_ptr + 20, true);
-            const sample_count = memoryView.getUint32(descriptor_ptr + 24, true);
-            const dimension_enum_val = memoryView.getUint32(descriptor_ptr + 28, true);
-            const format_enum_val = memoryView.getUint32(descriptor_ptr + 32, true);
-            const usage = memoryView.getUint32(descriptor_ptr + 36, true);
+            const size_width = memoryView.getUint32(descriptor_ptr + 4, true);
+            const size_height = memoryView.getUint32(descriptor_ptr + 8, true);
+            const size_depth_or_array_layers = memoryView.getUint32(descriptor_ptr + 12, true);
+            const mip_level_count = memoryView.getUint32(descriptor_ptr + 16, true);
+            const sample_count = memoryView.getUint32(descriptor_ptr + 20, true);
+            const dimension_enum_val = memoryView.getUint32(descriptor_ptr + 24, true);
+            const format_enum_val = memoryView.getUint32(descriptor_ptr + 28, true);
+            const usage = memoryView.getUint32(descriptor_ptr + 32, true);
             // Skipping view_formats for now
 
             const jsDescriptor = {
@@ -623,9 +623,9 @@ export const webGPUNativeImports = {
                 return recordError(`Device not found for handle: ${device_handle}`);
             }
 
-            const wasmMemoryU8 = new Uint8Array(globalWebGPU.wasmMemory.buffer);
-            const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
-            const wasmMemoryU64 = new BigUint64Array(globalWebGPU.wasmMemory.buffer); // For u64 fields
+            const wasmMemoryU8 = new Uint8Array(globalWebGPU.memory.buffer);
+            const wasmMemoryU32 = new Uint32Array(globalWebGPU.memory.buffer);
+            const wasmMemoryU64 = new BigUint64Array(globalWebGPU.memory.buffer); // For u64 fields
 
             // Read BindGroupDescriptor (label, layout_handle, entries_ptr, entries_len)
             // struct BindGroupDescriptor {
@@ -755,7 +755,7 @@ export const webGPUNativeImports = {
                 return recordError(`Device not found for handle: ${device_handle}`);
             }
 
-            const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
+            const wasmMemoryU32 = new Uint32Array(globalWebGPU.memory.buffer);
             let offset_u32 = descriptor_ptr / 4;
 
             const label_ptr = wasmMemoryU32[offset_u32++];
@@ -793,8 +793,8 @@ export const webGPUNativeImports = {
                 return recordError(`Device not found for handle: ${device_handle}`);
             }
 
-            const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
-            const wasmMemoryF64 = new Float64Array(globalWebGPU.wasmMemory.buffer);
+            const wasmMemoryU32 = new Uint32Array(globalWebGPU.memory.buffer);
+            const wasmMemoryF64 = new Float64Array(globalWebGPU.memory.buffer);
             let offset_u32 = descriptor_ptr / 4;
 
             const jsDescriptor = {};
@@ -859,10 +859,10 @@ export const webGPUNativeImports = {
                 return recordError(`Device not found for handle: ${device_handle}`);
             }
 
-            const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
-            const wasmMemoryF64 = new Float64Array(globalWebGPU.wasmMemory.buffer);
-            const wasmMemoryI32 = new Int32Array(globalWebGPU.wasmMemory.buffer);
-            const wasmMemoryF32 = new Float32Array(globalWebGPU.wasmMemory.buffer);
+            const wasmMemoryU32 = new Uint32Array(globalWebGPU.memory.buffer);
+            const wasmMemoryF64 = new Float64Array(globalWebGPU.memory.buffer);
+            const wasmMemoryI32 = new Int32Array(globalWebGPU.memory.buffer);
+            const wasmMemoryF32 = new Float32Array(globalWebGPU.memory.buffer);
             let descriptor_offset_u32 = descriptor_ptr / 4;
 
             // Helper function to read ProgrammableStageDescriptor (used by compute and vertex/fragment stages)
@@ -1047,7 +1047,7 @@ export const webGPUNativeImports = {
             if (descriptor_ptr) {
                 // Assuming CommandEncoderDescriptor has only a label for now.
                 // struct CommandEncoderDescriptor { label: ?[*:0]const u8 = null }
-                const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
+                const wasmMemoryU32 = new Uint32Array(globalWebGPU.memory.buffer);
                 const label_ptr = wasmMemoryU32[descriptor_ptr / 4]; // Read the pointer to the label string
                 if (label_ptr) {
                     jsDescriptor = { label: readStringFromMemory(label_ptr) };
@@ -1091,7 +1091,7 @@ export const webGPUNativeImports = {
             let jsDescriptor = undefined;
             if (descriptor_ptr) {
                 jsDescriptor = {};
-                const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
+                const wasmMemoryU32 = new Uint32Array(globalWebGPU.memory.buffer);
                 let offset_u32 = descriptor_ptr / 4;
 
                 const label_ptr = wasmMemoryU32[offset_u32++];
@@ -1146,7 +1146,7 @@ export const webGPUNativeImports = {
             if (!bindGroup) return recordError(`BindGroup not found: ${bind_group_handle}`);
 
             if (dynamic_offsets_data_ptr && dynamic_offsets_data_length > 0) {
-                const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
+                const wasmMemoryU32 = new Uint32Array(globalWebGPU.memory.buffer);
                 // dynamic_offsets_data_start is likely 0 if ptr is base of a new array from Zig for just these offsets.
                 // It is specified in bytes by some specs or element count by others. Here it is element count into wasmMemoryU32.
                 // Let's assume dynamic_offsets_data_ptr is the actual pointer to the data in wasm memory.
@@ -1224,8 +1224,8 @@ export const webGPUNativeImports = {
             if (!encoder) return recordError(`CommandEncoder not found: ${encoder_handle}`);
             if (!descriptor_ptr) return recordError("RenderPassDescriptor pointer is null");
 
-            const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
-            const wasmMemoryF64 = new Float64Array(globalWebGPU.wasmMemory.buffer);
+            const wasmMemoryU32 = new Uint32Array(globalWebGPU.memory.buffer);
+            const wasmMemoryF64 = new Float64Array(globalWebGPU.memory.buffer);
             let offset_u32 = descriptor_ptr / 4;
 
             const jsDescriptor = {};
@@ -1329,7 +1329,7 @@ export const webGPUNativeImports = {
             if (!bindGroup) return recordError(`BindGroup not found: ${bind_group_handle}`);
 
             if (dynamic_offsets_data_ptr && dynamic_offsets_data_length > 0) {
-                const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
+                const wasmMemoryU32 = new Uint32Array(globalWebGPU.memory.buffer);
                 const offsets = wasmMemoryU32.subarray(dynamic_offsets_data_ptr / 4, dynamic_offsets_data_ptr / 4 + dynamic_offsets_data_length);
                 pass.setBindGroup(index, bindGroup, offsets);
             } else {
@@ -1465,7 +1465,7 @@ export const webGPUNativeImports = {
 
             let jsDescriptor = undefined;
             if (descriptor_ptr) {
-                const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
+                const wasmMemoryU32 = new Uint32Array(globalWebGPU.memory.buffer);
                 const label_ptr = wasmMemoryU32[descriptor_ptr / 4];
                 if (label_ptr) {
                     jsDescriptor = { label: readStringFromMemory(label_ptr) };
@@ -1489,7 +1489,7 @@ export const webGPUNativeImports = {
                 return; 
             }
 
-            const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
+            const wasmMemoryU32 = new Uint32Array(globalWebGPU.memory.buffer);
             const jsCommandBuffers = [];
             let cb_ptr_offset = command_buffers_ptr / 4;
             for (let i = 0; i < command_buffers_len; i++) {
@@ -1597,9 +1597,9 @@ export const webGPUNativeImports = {
             let jsDescriptor = {}; // Default sampler if descriptor_ptr is null
 
             if (descriptor_ptr) {
-                const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
-                const wasmMemoryF32 = new Float32Array(globalWebGPU.wasmMemory.buffer);
-                const wasmMemoryU16 = new Uint16Array(globalWebGPU.wasmMemory.buffer);
+                const wasmMemoryU32 = new Uint32Array(globalWebGPU.memory.buffer);
+                const wasmMemoryF32 = new Float32Array(globalWebGPU.memory.buffer);
+                const wasmMemoryU16 = new Uint16Array(globalWebGPU.memory.buffer);
                 let offset_u32 = descriptor_ptr / 4;
 
                 // SamplerDescriptor layout from webgpu.zig:
@@ -1669,7 +1669,7 @@ export const webGPUNativeImports = {
                 // Let's adjust reading to be more explicit about struct layout for optional enum. Field order: lodMaxClamp (f32), compare_value (u32), compare_has_value (u8), max_anisotropy (u16).
                 // Offset of compare_value from start of descriptor: label(4) + 6*u32_enums(24) + 2*f32_lods(8) = 36 bytes. So offset_u32 points to compare_val.
                 const compare_is_present_offset_bytes = descriptor_ptr + 36 + 4; // After compare_val (u32)
-                const compare_is_present = new Uint8Array(globalWebGPU.wasmMemory.buffer, compare_is_present_offset_bytes, 1)[0] !== 0;
+                const compare_is_present = new Uint8Array(globalWebGPU.memory.buffer, compare_is_present_offset_bytes, 1)[0] !== 0;
                 if (compare_is_present) {
                     jsDescriptor.compare = ZIG_COMPARE_FUNCTION_TO_JS[compare_val];
                 }
@@ -1680,7 +1680,7 @@ export const webGPUNativeImports = {
                 jsDescriptor.maxAnisotropy = wasmMemoryU16[ (descriptor_ptr / 2) + (52 / 2) ]; // Careful with u16 indexing from base u32 offset_ptr
                                                                                                 // Simpler: use byte offset for DataView
                 const max_anisotropy_offset_bytes = descriptor_ptr + 36 + 8 + 8; // Label(4)+Enums(24)+LODs(8)+CompareOpt(8 for val+flag+pad) = 52
-                jsDescriptor.maxAnisotropy = new DataView(globalWebGPU.wasmMemory.buffer).getUint16(max_anisotropy_offset_bytes, true);
+                jsDescriptor.maxAnisotropy = new DataView(globalWebGPU.memory.buffer).getUint16(max_anisotropy_offset_bytes, true);
 
             } else { // No descriptor_ptr, use WebGPU defaults (which are mostly what our Zig defaults are)
                 // JS default for createSampler({}) is fine.
@@ -1848,7 +1848,7 @@ const ZIG_MIPMAP_FILTER_MODE_TO_JS = {
 // And webGPUNativeImports.wasmMemory = instance.exports.memory;
 
 function readStringFromMemory(ptr, len = 0) {
-    const wasmMemoryU8 = new Uint8Array(globalWebGPU.wasmMemory.buffer);
+    const wasmMemoryU8 = new Uint8Array(globalWebGPU.memory.buffer);
     if (len === 0) { // Assume null-terminated if len is not provided
         let end = ptr;
         while (wasmMemoryU8[end] !== 0) {
@@ -1869,7 +1869,7 @@ function recordError(message) {
 
 function readBindGroupLayoutDescriptorFromMemory(descriptor_ptr) {
     globalWebGPU.errorBufferLen = 0; // Clear previous error for this read operation
-    const wasmMemoryU32 = new Uint32Array(globalWebGPU.wasmMemory.buffer);
+    const wasmMemoryU32 = new Uint32Array(globalWebGPU.memory.buffer);
     let offset_u32 = descriptor_ptr / 4; // Current offset in u32 words
 
     const label_ptr = wasmMemoryU32[offset_u32++];
@@ -1887,12 +1887,13 @@ function readBindGroupLayoutDescriptorFromMemory(descriptor_ptr) {
     let current_bgl_entry_ptr_bytes = entries_ptr;
 
     // Size estimations for Zig structs (for calculating stride):
-    // BufferBindingLayout: type(u32), has_dynamic_offset(bool->u32pad), min_binding_size(u64) = 4+4+8 = 16 bytes
-    // TextureBindingLayout: sample_type(u32), view_dimension(u32), multisampled(bool->u32pad) = 4+4+4 = 12 bytes
+    // BufferBindingLayout: type(u32), has_dynamic_offset(bool->u8), pad(3), min_binding_size(u64) = 4+1+3+8 = 16 bytes
+    // TextureBindingLayout: sample_type(u32), view_dimension(u32), multisampled(bool->u8), pad(3) = 4+4+1+3 = 12 bytes, but might align to 16.
     // BindGroupLayoutEntry: binding(u32) + visibility(u32) + resource_type(u32) + layout(union)
-    //                       = 4 + 4 + 4 + size_of_active_union_member
-    // If buffer: 12 + 16 = 28 bytes
-    // If texture: 12 + 12 = 24 bytes
+    //                       = 4 + 4 + 4 + size_of_active_union_member. Union is aligned to largest member (8 for u64 in BufferBindingLayout).
+    // So, entry is 12 bytes + layout. Total size must be multiple of 8.
+    // If buffer: 12 + 16 = 28. Padded to 32.
+    // If texture: 12 + 12 = 24. Stays 24.
 
     for (let i = 0; i < entries_len; i++) {
         let entry_base_offset_u32 = current_bgl_entry_ptr_bytes / 4;
@@ -1912,7 +1913,10 @@ function readBindGroupLayoutDescriptorFromMemory(descriptor_ptr) {
             case 0: // buffer
                 jsEntry.buffer = readBufferBindingLayoutFromMemory(layout_union_offset_bytes);
                 if (globalWebGPU.errorBufferLen > 0) return null; // Error in sub-reader
-                current_entry_size_bytes += 16; // Approx size of BufferBindingLayout
+                current_entry_size_bytes += 16; // Size of BufferBindingLayout
+                if (current_entry_size_bytes % 8 !== 0) { // Ensure alignment to 8 for the whole entry
+                    current_entry_size_bytes += 8 - (current_entry_size_bytes % 8);
+                }
                 break;
             case 1: // texture
                 jsEntry.texture = readTextureBindingLayoutFromMemory(layout_union_offset_bytes);
@@ -1941,7 +1945,7 @@ function readBindGroupLayoutDescriptorFromMemory(descriptor_ptr) {
 
 function readBufferBindingLayoutFromMemory(layout_ptr) {
     // layout_ptr is the absolute byte offset of the BufferBindingLayout struct
-    const wasmMemoryView = new DataView(globalWebGPU.wasmMemory.buffer);
+    const wasmMemoryView = new DataView(globalWebGPU.memory.buffer);
 
     const typeZig = wasmMemoryView.getUint32(layout_ptr + 0, true); // offset 0
     const hasDynamicOffset = wasmMemoryView.getUint8(layout_ptr + 4, true) !== 0; // offset 4 (bool usually 1 byte, but check alignment)
@@ -1964,7 +1968,7 @@ function readBufferBindingLayoutFromMemory(layout_ptr) {
 
 function readTextureBindingLayoutFromMemory(layout_ptr) {
     // layout_ptr is the absolute byte offset of the TextureBindingLayout struct
-    const wasmMemoryView = new DataView(globalWebGPU.wasmMemory.buffer);
+    const wasmMemoryView = new DataView(globalWebGPU.memory.buffer);
 
     const sampleTypeZig = wasmMemoryView.getUint32(layout_ptr + 0, true); // offset 0
     const viewDimensionZig = wasmMemoryView.getUint32(layout_ptr + 4, true); // offset 4
