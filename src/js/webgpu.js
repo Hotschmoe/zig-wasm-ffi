@@ -715,7 +715,8 @@ export const webGPUNativeImports = {
                     const buffer_size_lo = wasmMemoryU32[resource_offset + 4]; // size: u64 low at offset 16
                     const buffer_size_hi = wasmMemoryU32[resource_offset + 5]; // size: u64 high at offset 20
 
-                    console.log(`[webgpu.js] Bind group entry binding ${jsEntry.binding}: buffer_handle=${buffer_handle}, offset_lo=${buffer_offset_lo}, offset_hi=${buffer_offset_hi}, size_lo=${buffer_size_lo}, size_hi=${buffer_size_hi}`);
+                    // Debug: Uncomment for buffer handle debugging
+                    // console.log(`[webgpu.js] Bind group entry binding ${jsEntry.binding}: buffer_handle=${buffer_handle}`);
                     
                     // Enhanced error checking for buffer handle 0
                     if (buffer_handle === 0) {
@@ -737,7 +738,8 @@ export const webGPUNativeImports = {
                     // We should advance by the full struct size, not calculate individual field sizes
                     entry_offset_bytes += 32; // Advance by size of BindGroupEntry struct
                 } else if (bglEntry.texture !== undefined) { // It's a texture view binding
-                    const texture_view_handle = wasmMemoryU32[current_entry_ptr_u32 + 0]; // struct TextureBinding { texture_view: TextureView (u32) }
+                    const resource_offset = current_entry_ptr_u32 + 1; // +1 u32 = +4 bytes for resource union
+                    const texture_view_handle = wasmMemoryU32[resource_offset + 0]; // struct TextureBinding { texture_view: TextureView (u32) }
                     const gpuTextureView = globalWebGPU.textureViews[texture_view_handle];
                     if (!gpuTextureView) return recordError(`GPUTextureView not found for handle ${texture_view_handle} at binding ${jsEntry.binding}`);
                     jsEntry.resource = gpuTextureView;
