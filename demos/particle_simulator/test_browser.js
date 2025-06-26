@@ -5,6 +5,23 @@ const fs = require('fs');
 const path = require('path');
 
 async function runBrowserTest() {
+    // Limit console output to prevent spam
+    const MAX_OUTPUT_LINES = 250;
+    let outputLineCount = 0;
+    let outputLimitReached = false;
+
+    function logWithLimit(logFn, ...args) {
+        if (outputLineCount >= MAX_OUTPUT_LINES) {
+            if (!outputLimitReached) {
+                console.log(`\n⚠️  Output limit reached (${MAX_OUTPUT_LINES} lines). Suppressing further output...`);
+                outputLimitReached = true;
+            }
+            return;
+        }
+        outputLineCount++;
+        logFn(...args);
+    }
+
     // Start simple HTTP server
     const server = http.createServer((req, res) => {
         const filePath = path.join(__dirname, 'dist', req.url === '/' ? 'index.html' : req.url);
@@ -39,13 +56,13 @@ async function runBrowserTest() {
         page.on('console', msg => {
             const type = msg.type();
             const text = msg.text();
-            console.log(`[${type.toUpperCase()}] ${text}`);
+            logWithLimit(console.log, `[${type.toUpperCase()}] ${text}`);
         });
         
         // Enhanced error capturing with stack traces
         page.on('pageerror', error => {
-            console.error(`❌ Page Error: ${error.message}`);
-            console.error(`Stack: ${error.stack}`);
+            logWithLimit(console.error, `❌ Page Error: ${error.message}`);
+            logWithLimit(console.error, `Stack: ${error.stack}`);
         });
 
         // Capture JavaScript errors with stack traces
@@ -71,7 +88,7 @@ async function runBrowserTest() {
         // Capture unhandled promise rejections
         page.on('response', response => {
             if (!response.ok()) {
-                console.error(`❌ HTTP Error: ${response.status()} ${response.url()}`);
+                logWithLimit(console.error, `❌ HTTP Error: ${response.status()} ${response.url()}`);
             }
         });
         
