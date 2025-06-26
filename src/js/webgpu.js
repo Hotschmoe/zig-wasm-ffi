@@ -1734,8 +1734,10 @@ const ZIG_TEXTURE_VIEW_DIMENSION_TO_JS = {
     0: "1d",
     1: "2d",
     2: "3d",
+    3: "2d-array", 
+    4: "cube", 
+    5: "cube-array",
     // Add more as needed e.g. from a distinct GPUTextureViewDimension enum in Zig if created
-    // 3: "2d-array", 4: "cube", 5: "cube-array", etc.
 };
 function mapTextureViewDimensionZigToJs(zigValue) {
     return ZIG_TEXTURE_VIEW_DIMENSION_TO_JS[zigValue] || "2d";
@@ -1940,7 +1942,10 @@ function readBindGroupLayoutDescriptorFromMemory(descriptor_ptr) {
             case 1: // texture
                 jsEntry.texture = readTextureBindingLayoutFromMemory(layout_union_offset_bytes);
                 if (globalWebGPU.errorBufferLen > 0) return null; // Error in sub-reader
-                current_entry_size_bytes += 12; // Approx size of TextureBindingLayout
+                current_entry_size_bytes += 16; // Size of TextureBindingLayout (12 bytes + 4 padding for 8-byte alignment)
+                if (current_entry_size_bytes % 8 !== 0) { // Ensure alignment to 8 for the whole entry
+                    current_entry_size_bytes += 8 - (current_entry_size_bytes % 8);
+                }
                 break;
             case 2: // sampler
                 recordError(`SamplerBindingLayout in BGL not yet implemented for binding ${jsEntry.binding}`); return null;
@@ -1997,7 +2002,7 @@ function readTextureBindingLayoutFromMemory(layout_ptr) {
 
     return {
         sampleType: mapTextureSampleTypeZigToJs(sampleTypeZig),
-        viewDimension: mapTextureDimensionZigToJs(viewDimensionZig), 
+        viewDimension: mapTextureViewDimensionZigToJs(viewDimensionZig), 
         multisampled: multisampled,
     };
 }
