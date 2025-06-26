@@ -676,7 +676,7 @@ pub fn deviceGetQueue(device: Device) !Queue {
 }
 
 pub fn deviceCreateBuffer(device_handle: Device, descriptor: *const BufferDescriptor) !Buffer {
-    webutils.log("Creating WebGPU Buffer (Zig FFI wrapper)...");
+    // webutils.log("Creating WebGPU Buffer (Zig FFI wrapper)...");
     if (device_handle == 0) {
         webutils.log("E00: Invalid device handle (0) passed to deviceCreateBuffer.");
         return error.InvalidHandle;
@@ -700,11 +700,11 @@ pub fn queueWriteBuffer(queue: Queue, buffer: Buffer, buffer_offset: u64, data_s
     }
     env_wgpu_queue_write_buffer_js(queue, buffer, buffer_offset, data_size, @intFromPtr(data));
     // TODO: Check for errors after write? WebGPU doesn't throw sync errors for queue ops usually.
-    webutils.log("Buffer write operation submitted.");
+    // webutils.log("Buffer write operation submitted.");
 }
 
 pub fn deviceCreateShaderModule(device_handle: Device, descriptor: *const ShaderModuleDescriptor) !ShaderModule {
-    webutils.log("Creating WebGPU Shader Module (Zig FFI wrapper)...");
+    // webutils.log("Creating WebGPU Shader Module (Zig FFI wrapper)...");
     if (device_handle == 0) {
         webutils.log("E00: Invalid device handle (0) passed to deviceCreateShaderModule.");
         return error.InvalidHandle;
@@ -758,7 +758,7 @@ pub const GeneralWebGPUError = error{
 };
 
 pub fn deviceCreateTexture(device_handle: Device, descriptor: *const TextureDescriptor) !Texture {
-    webutils.log("Creating WebGPU Texture (Zig FFI wrapper)...");
+    // webutils.log("Creating WebGPU Texture (Zig FFI wrapper)...");
     if (device_handle == 0) {
         webutils.log("E00: Invalid device handle (0) passed to deviceCreateTexture.");
         return error.InvalidHandle;
@@ -773,7 +773,7 @@ pub fn deviceCreateTexture(device_handle: Device, descriptor: *const TextureDesc
 }
 
 pub fn textureCreateView(texture_handle: Texture, descriptor: ?*const TextureViewDescriptor) !TextureView {
-    webutils.log("Creating WebGPU Texture View (Zig FFI wrapper)...");
+    // webutils.log("Creating WebGPU Texture View (Zig FFI wrapper)...");
     if (texture_handle == 0) {
         webutils.log("E00: Invalid texture handle (0) passed to textureCreateView.");
         return error.InvalidHandle;
@@ -788,7 +788,7 @@ pub fn textureCreateView(texture_handle: Texture, descriptor: ?*const TextureVie
 }
 
 pub fn deviceCreateBindGroupLayout(device_handle: Device, descriptor: *const BindGroupLayoutDescriptor) !BindGroupLayout {
-    webutils.log("Creating WebGPU BindGroupLayout (Zig FFI wrapper)...");
+    // webutils.log("Creating WebGPU BindGroupLayout (Zig FFI wrapper)...");
     if (device_handle == 0) {
         webutils.log("E00: Invalid device handle (0) passed to deviceCreateBindGroupLayout.");
         return error.InvalidHandle;
@@ -807,7 +807,7 @@ pub fn deviceCreateBindGroupLayout(device_handle: Device, descriptor: *const Bin
 }
 
 pub fn deviceCreateBindGroup(device_handle: Device, descriptor: *const BindGroupDescriptor) !BindGroup {
-    webutils.log("Creating WebGPU BindGroup (Zig FFI wrapper)...");
+    // webutils.log("Creating WebGPU BindGroup (Zig FFI wrapper)...");
     if (device_handle == 0) {
         webutils.log("E00: Invalid device handle (0) passed to deviceCreateBindGroup.");
         return error.InvalidHandle;
@@ -826,7 +826,7 @@ pub fn deviceCreateBindGroup(device_handle: Device, descriptor: *const BindGroup
 }
 
 pub fn deviceCreatePipelineLayout(device_handle: Device, descriptor: *const PipelineLayoutDescriptor) !PipelineLayout {
-    webutils.log("Creating WebGPU PipelineLayout (Zig FFI wrapper)...");
+    // webutils.log("Creating WebGPU PipelineLayout (Zig FFI wrapper)...");
     if (device_handle == 0) {
         webutils.log("E00: Invalid device handle (0) passed to deviceCreatePipelineLayout.");
         return error.InvalidHandle;
@@ -845,7 +845,7 @@ pub fn deviceCreatePipelineLayout(device_handle: Device, descriptor: *const Pipe
 }
 
 pub fn deviceCreateComputePipeline(device_handle: Device, descriptor: *const ComputePipelineDescriptor) !ComputePipeline {
-    webutils.log("Creating WebGPU ComputePipeline (Zig FFI wrapper)...");
+    // webutils.log("Creating WebGPU ComputePipeline (Zig FFI wrapper)...");
     if (device_handle == 0) {
         webutils.log("E00: Invalid device handle (0) passed to deviceCreateComputePipeline.");
         return error.InvalidHandle;
@@ -866,7 +866,7 @@ pub fn deviceCreateComputePipeline(device_handle: Device, descriptor: *const Com
 }
 
 pub fn deviceCreateRenderPipeline(device_handle: Device, descriptor: *const RenderPipelineDescriptor) !RenderPipeline {
-    webutils.log("Creating WebGPU RenderPipeline (Zig FFI wrapper)...");
+    // webutils.log("Creating WebGPU RenderPipeline (Zig FFI wrapper)...");
     if (device_handle == 0) {
         webutils.log("E00: Invalid device handle (0) passed to deviceCreateRenderPipeline.");
         return error.InvalidHandle;
@@ -935,7 +935,7 @@ pub const TextureSampleType = enum(u32) { // Corresponds to GPUTextureSampleType
 };
 
 pub fn deviceCreateCommandEncoder(device_handle: Device, descriptor: ?*const CommandEncoderDescriptor) !CommandEncoder {
-    webutils.log("Creating WebGPU CommandEncoder (Zig FFI wrapper)...");
+    // webutils.log("Creating WebGPU CommandEncoder (Zig FFI wrapper)...");
     if (device_handle == 0) {
         webutils.log("E00: Invalid device handle (0) passed to deviceCreateCommandEncoder.");
         return error.InvalidHandle;
@@ -1001,7 +1001,7 @@ pub fn commandEncoderBeginComputePass(encoder_handle: CommandEncoder, descriptor
 }
 
 pub fn computePassEncoderSetPipeline(pass_handle: ComputePassEncoder, pipeline_handle: ComputePipeline) void {
-    webutils.log("ComputePassEncoder: SetPipeline...");
+    // webutils.log("ComputePassEncoder: SetPipeline...");
     if (pass_handle == 0 or pipeline_handle == 0) {
         webutils.log("E00: Invalid handle (0) for compute pass or pipeline in setPipeline.");
         return;
@@ -1010,7 +1010,7 @@ pub fn computePassEncoderSetPipeline(pass_handle: ComputePassEncoder, pipeline_h
 }
 
 pub fn computePassEncoderSetBindGroup(pass_handle: ComputePassEncoder, index: u32, bind_group_handle: BindGroup, dynamic_offsets: ?[]const u32) void {
-    webutils.log("ComputePassEncoder: SetBindGroup...");
+    // webutils.log("ComputePassEncoder: SetBindGroup...");
     if (pass_handle == 0 or bind_group_handle == 0) {
         webutils.log("E00: Invalid handle (0) for compute pass or bind group in setBindGroup.");
         return;
@@ -1032,7 +1032,7 @@ pub fn computePassEncoderSetBindGroup(pass_handle: ComputePassEncoder, index: u3
 }
 
 pub fn computePassEncoderDispatchWorkgroups(pass_handle: ComputePassEncoder, count_x: u32, count_y: u32, count_z: u32) void {
-    webutils.log("ComputePassEncoder: DispatchWorkgroups...");
+    // webutils.log("ComputePassEncoder: DispatchWorkgroups...");
     if (pass_handle == 0) {
         webutils.log("E00: Invalid compute pass handle (0) in dispatchWorkgroups.");
         return;
@@ -1041,7 +1041,7 @@ pub fn computePassEncoderDispatchWorkgroups(pass_handle: ComputePassEncoder, cou
 }
 
 pub fn computePassEncoderDispatchWorkgroupsIndirect(pass_handle: ComputePassEncoder, indirect_buffer: Buffer, indirect_offset: u64) void {
-    webutils.log("ComputePassEncoder: DispatchWorkgroupsIndirect...");
+    // webutils.log("ComputePassEncoder: DispatchWorkgroupsIndirect...");
     if (pass_handle == 0 or indirect_buffer == 0) {
         webutils.log("E00: Invalid handle (0) for pass or indirect_buffer in dispatchWorkgroupsIndirect.");
         return;
@@ -1050,7 +1050,7 @@ pub fn computePassEncoderDispatchWorkgroupsIndirect(pass_handle: ComputePassEnco
 }
 
 pub fn computePassEncoderWriteTimestamp(pass_handle: ComputePassEncoder, query_set: QuerySet, query_index: u32) void {
-    webutils.log("ComputePassEncoder: WriteTimestamp...");
+    // webutils.log("ComputePassEncoder: WriteTimestamp...");
     if (pass_handle == 0 or query_set == 0) {
         webutils.log("E00: Invalid handle (0) for pass or query_set in writeTimestamp.");
         return;
@@ -1071,7 +1071,7 @@ pub fn computePassEncoderWriteTimestamp(pass_handle: ComputePassEncoder, query_s
 }
 
 pub fn computePassEncoderEnd(pass_handle: ComputePassEncoder) void {
-    webutils.log("ComputePassEncoder: EndPass...");
+    // webutils.log("ComputePassEncoder: EndPass...");
     if (pass_handle == 0) {
         webutils.log("E00: Invalid compute pass handle (0) in endPass.");
         return;
@@ -1357,7 +1357,7 @@ pub extern "env" fn env_wgpu_device_create_sampler_js(device_handle: Device, des
 
 // AFTER deviceCreateRenderPipeline Zig wrapper function
 pub fn deviceCreateSampler(device_handle: Device, descriptor: ?*const SamplerDescriptor) !Sampler {
-    webutils.log("Creating WebGPU Sampler (Zig FFI wrapper)...");
+    // webutils.log("Creating WebGPU Sampler (Zig FFI wrapper)...");
     if (device_handle == 0) {
         webutils.log("E00: Invalid device handle (0) passed to deviceCreateSampler.");
         return error.InvalidHandle;

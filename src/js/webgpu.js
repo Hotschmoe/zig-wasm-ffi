@@ -398,7 +398,8 @@ export const webGPUNativeImports = {
 
             const buffer = device.createBuffer(jsDescriptor);
             const handle = storeBuffer(buffer);
-            console.log(`[webgpu.js] Buffer created with handle: ${handle}, size: ${Number(size)}, usage: ${usage}, mappedAtCreation: ${mappedAtCreation}`);
+            // Debug: Uncomment for detailed buffer creation logging
+            // console.log(`[webgpu.js] Buffer created with handle: ${handle}, size: ${Number(size)}, usage: ${usage}, mappedAtCreation: ${mappedAtCreation}`);
             return handle;
         } catch (e) {
             const errorMsg = `Error in deviceCreateBuffer: ${e.message}`;
@@ -673,7 +674,8 @@ export const webGPUNativeImports = {
                 let current_entry_ptr_u32 = entry_offset_bytes / 4;
 
                 jsEntry.binding = wasmMemoryU32[current_entry_ptr_u32++];
-                console.log(`[webgpu.js] Reading entry ${i}: offset_bytes=${entry_offset_bytes}, offset_u32=${current_entry_ptr_u32-1}, binding=${jsEntry.binding}`);
+                // Debug: Uncomment for detailed bind group entry debugging
+                // console.log(`[webgpu.js] Reading entry ${i}: offset_bytes=${entry_offset_bytes}, offset_u32=${current_entry_ptr_u32-1}, binding=${jsEntry.binding}`);
 
                 // The resource is a union. The Zig code must tell us which field of the union is active.
                 // For now, we assume the BindGroupLayout provides enough context to know what type is expected.
