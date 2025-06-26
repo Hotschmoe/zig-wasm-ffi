@@ -118,4 +118,15 @@ pub fn build(b: *std.Build) !void {
     for (all_copy_js_glue_steps.items) |js_copy_step| {
         deploy_step.dependOn(js_copy_step);
     }
+
+    // --- Test Browser Step ---
+    const test_browser_cmd = b.addSystemCommand(&[_][]const u8{ "python", "test_browser.py" });
+    test_browser_cmd.step.dependOn(&copy_wasm.step);
+    test_browser_cmd.step.dependOn(&copy_web_assets.step);
+    for (all_copy_js_glue_steps.items) |js_copy_step| {
+        test_browser_cmd.step.dependOn(js_copy_step);
+    }
+
+    const test_browser_step = b.step("test_browser", "Build, deploy, and run headless browser test");
+    test_browser_step.dependOn(&test_browser_cmd.step);
 }
