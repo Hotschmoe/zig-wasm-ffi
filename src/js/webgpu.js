@@ -1418,12 +1418,8 @@ export const webGPUNativeImports = {
         }
     },
 
-    env_wgpu_render_pass_encoder_set_vertex_buffer_js: function(pass_handle, slot, buffer_handle, offset_low, offset_high, size_low, size_high) {
-        console.log(`[webgpu.js] DEBUG SetVertexBuffer ENTRY: args.length=${arguments.length}`);
-        console.log(`[webgpu.js] DEBUG SetVertexBuffer RAW: pass=${pass_handle}, slot=${slot}, buffer=${buffer_handle}`);
-        console.log(`[webgpu.js] DEBUG SetVertexBuffer RAW: offset_low=${offset_low}, offset_high=${offset_high}, size_low=${size_low}, size_high=${size_high}`);
-        console.log(`[webgpu.js] DEBUG SetVertexBuffer TYPES: offset_low type=${typeof offset_low}, offset_high type=${typeof offset_high}`);
-        console.log(`[webgpu.js] DEBUG SetVertexBuffer TYPES: size_low type=${typeof size_low}, size_high type=${typeof size_high}`);
+    env_wgpu_render_pass_encoder_set_vertex_buffer_js: function(pass_handle, slot, buffer_handle, offset, size) {
+        // SetVertexBuffer function - working correctly now!
         
         try {
             const pass = globalWebGPU.renderPassEncoders[pass_handle];
@@ -1431,33 +1427,39 @@ export const webGPUNativeImports = {
             const buffer = buffer_handle ? globalWebGPU.buffers[buffer_handle] : null;
             if (buffer_handle && !buffer) return recordError(`VertexBuffer not found: ${buffer_handle}`);
             
-            // Debug logging for parameter values
-            console.log(`[webgpu.js] DEBUG SetVertexBuffer: offset_low=${offset_low}, offset_high=${offset_high}, size_low=${size_low}, size_high=${size_high}`);
+            // Convert offset and size to safe JavaScript numbers
+            // Note: Zig u64 values may come as JavaScript BigInt or Number
+            let offsetNum = 0;
+            let sizeParam = undefined;
             
-            const offset = combineToBigInt(offset_low || 0, offset_high || 0);
-            
-            // Handle WHOLE_SIZE (0xffffffffffffffff) and undefined size parameters
-            let size;
-            if (size_low === undefined || size_high === undefined) {
-                // If size parameters are undefined, use undefined for WebGPU (whole buffer)
-                size = undefined;
-            } else {
-                const sizeValue = combineToBigInt(size_low, size_high);
-                // Check if this is WHOLE_SIZE (0xffffffffffffffff)
-                if (sizeValue === 0xffffffffffffffffn) {
-                    size = undefined; // WebGPU undefined means whole buffer
-                } else {
-                    size = Number(sizeValue);
-                }
+            // Convert offset and size parameters properly
+            if (typeof offset === 'bigint') {
+                offsetNum = Number(offset);
+            } else if (typeof offset === 'number') {
+                offsetNum = offset;
             }
             
-            console.log(`[webgpu.js] DEBUG SetVertexBuffer: calculated offset=${offset} (as Number: ${Number(offset)}), size=${size}`);
+            if (typeof size === 'bigint') {
+                // Check if this is WHOLE_SIZE (0xffffffffffffffff or -1 as BigInt)
+                if (size === 0xffffffffffffffffn || size === -1n) {
+                    sizeParam = undefined; // WebGPU undefined means whole buffer
+                } else {
+                    sizeParam = Number(size);
+                }
+            } else if (typeof size === 'number') {
+                // Check for WHOLE_SIZE as a regular number
+                if (size === 0xffffffffffffffff || size === -1) {
+                    sizeParam = undefined;
+                } else {
+                    sizeParam = size;
+                }
+            }
 
             if (buffer) {
-                if (size !== undefined) {
-                    pass.setVertexBuffer(slot, buffer, Number(offset), size);
+                if (sizeParam !== undefined) {
+                    pass.setVertexBuffer(slot, buffer, offsetNum, sizeParam);
                 } else {
-                    pass.setVertexBuffer(slot, buffer, Number(offset)); // Omit size for whole buffer
+                    pass.setVertexBuffer(slot, buffer, offsetNum); // Omit size for whole buffer
                 }
             } else {
                 pass.setVertexBuffer(slot, null); // Unsetting buffer
@@ -1467,7 +1469,7 @@ export const webGPUNativeImports = {
         }
     },
 
-    env_wgpu_render_pass_encoder_set_index_buffer_js: function(pass_handle, buffer_handle, index_format_enum, offset_low, offset_high, size_low, size_high) {
+    env_wgpu_render_pass_encoder_set_index_buffer_js: function(pass_handle, buffer_handle, index_format_enum, offset, size) {
         try {
             const pass = globalWebGPU.renderPassEncoders[pass_handle];
             if (!pass) return recordError(`RenderPassEncoder not found: ${pass_handle}`);
@@ -1478,10 +1480,37 @@ export const webGPUNativeImports = {
             const indexFormat = ZIG_INDEX_FORMAT_TO_JS[index_format_enum];
             if(!indexFormat) return recordError(`Invalid index format: ${index_format_enum}`);
 
-            const offset = combineToBigInt(offset_low, offset_high);
-            const size = combineToBigInt(size_low, size_high);
+            // Convert offset and size to safe JavaScript numbers
+            let offsetNum = 0;
+            let sizeParam = 0;
+            
+            if (typeof offset === 'bigint') {
+                offsetNum = Number(offset);
+            } else if (typeof offset === 'number') {
+                offsetNum = offset;
+            }
+            
+            if (typeof size === 'bigint') {
+                // Check if this is WHOLE_SIZE (0xffffffffffffffff or -1 as BigInt)
+                if (size === 0xffffffffffffffffn || size === -1n) {
+                    sizeParam = undefined; // WebGPU undefined means whole buffer
+                } else {
+                    sizeParam = Number(size);
+                }
+            } else if (typeof size === 'number') {
+                // Check for WHOLE_SIZE as a regular number (if it fits in Number range)
+                if (size === 0xffffffffffffffff || size === -1) {
+                    sizeParam = undefined;
+                } else {
+                    sizeParam = size;
+                }
+            }
 
-            pass.setIndexBuffer(buffer, indexFormat, Number(offset), Number(size)); // Pass size always
+            if (sizeParam !== undefined) {
+                pass.setIndexBuffer(buffer, indexFormat, offsetNum, sizeParam);
+            } else {
+                pass.setIndexBuffer(buffer, indexFormat, offsetNum); // Omit size for whole buffer
+            }
         } catch (e) {
             recordError(e.message);
         }
