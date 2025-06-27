@@ -268,18 +268,21 @@ pub const BufferBindingType = enum(u32) { // Corresponds to GPUBufferBindingType
 };
 
 pub const BufferBindingLayout = extern struct { // Corresponds to GPUBufferBindingLayout
-    type: BufferBindingType, // = .uniform,
-    has_dynamic_offset: bool, // = false,
-    min_binding_size: u64, // = 0, // GPUSize64
+    type: BufferBindingType = .uniform, // u32 (4 bytes, offset 0)
+    has_dynamic_offset: bool = false, // bool (1 byte, offset 4)
+    _padding: [3]u8 = [_]u8{0} ** 3, // 3 bytes padding (offset 5-7) to align u64 to 8-byte boundary
+    min_binding_size: u64 = 0, // u64 (8 bytes, offset 8)
 };
 
 // Re-using TextureDimension for view_dimension for now. WebGPU spec has GPUTextureViewDimension
 // which includes "1d", "2d", "2d-array", "cube", "cube-array", "3d".
 // Our TextureDimension only has 1d, 2d, 3d. This might need a separate enum if advanced views are used.
 pub const TextureBindingLayout = extern struct { // Corresponds to GPUTextureBindingLayout
-    sample_type: TextureSampleType, // = .float,
-    view_dimension: TextureDimension, // = .@"2d", // This should be TextureViewDimension type
-    multisampled: bool, // = false,
+    sample_type: TextureSampleType, // u32 (4 bytes, offset 0)
+    view_dimension: TextureDimension, // u32 (4 bytes, offset 4)
+    multisampled: bool, // bool (1 byte, offset 8)
+    _padding: [7]u8 = [_]u8{0} ** 7, // 7 bytes padding (offset 9-15) to match BufferBindingLayout size in union
+    // Total size: 16 bytes to match union alignment
 };
 
 // More specific enums needed for StorageTextureBindingLayout if used (e.g. StorageTextureAccess)
@@ -1101,12 +1104,14 @@ pub const Color = extern struct { // Corresponds to GPUColor { r: f64, g: f64, b
 };
 
 pub const RenderPassColorAttachment = extern struct { // Corresponds to GPURenderPassColorAttachment
-    view: TextureView,
-    resolve_target: TextureView,
-    resolve_target_is_present: bool,
-    clear_value: ?*const Color = null,
-    load_op: GPULoadOp,
-    store_op: GPUStoreOp,
+    view: TextureView, // u32 - 4 bytes, offset 0
+    resolve_target: TextureView, // u32 - 4 bytes, offset 4
+    resolve_target_is_present: bool, // bool - 1 byte, offset 8
+    _padding1: [7]u8 = [_]u8{0} ** 7, // 7 bytes padding (offset 9-15) to align pointer to 8-byte boundary
+    clear_value: ?*const Color = null, // ?*const - 8 bytes, offset 16
+    load_op: GPULoadOp, // u32 - 4 bytes, offset 24
+    store_op: GPUStoreOp, // u32 - 4 bytes, offset 28
+    // Total size: 32 bytes
 };
 
 pub const RenderPassDepthStencilAttachment = extern struct { // Corresponds to GPURenderPassDepthStencilAttachment

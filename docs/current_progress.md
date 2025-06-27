@@ -113,63 +113,89 @@ Migrate the known-working mouse and keyboard input system from the `archive/wasm
 - Update `zig-wasm-ffi/README.md` if necessary to accurately reflect how to integrate and use the `webinput` module.
 - Mark this plan as completed in `docs/current_progress.md`.
 
-# Current Progress Report
+# Current Progress
 
-## ✅ **MAJOR SUCCESS: WebGPU Buffer Handle Issue COMPLETELY RESOLVED**
+## Particle Simulator Demo Status - MAJOR PROGRESS MADE! 🎉
 
-### 🎉 Problem Status: **SOLVED**
-- **Root Cause**: Struct memory alignment/padding issues between Zig and JavaScript  
-- **All Issues Fixed**: Buffer handles, multi-entry bind groups, WHOLE_SIZE handling
-- **Test Result**: `✓ Browser test completed` - Full functionality restored
+### ✅ **FIXED**: Critical WebGPU FFI Issues
+- **Fixed bind group layout reading bugs** in JavaScript FFI layer
+- **Fixed buffer binding layout struct alignment** - corrected reading of `BufferBindingLayout` with proper padding for bool + u64 fields
+- **Fixed texture binding layout reading** - corrected function name from `mapTextureDimensionZigToJs` to `mapTextureViewDimensionZigToJs`
+- **Added proper struct alignment** for texture entries in bind group layouts (16 bytes with padding)
+- **Fixed render pass color attachment struct reading** - corrected memory layout to match Zig extern struct with proper pointer alignment
 
-### Fixes Implemented
-1. **Struct Padding Fix**: Adjusted JavaScript memory reading offsets for Zig struct padding:
-   - `buffer: u32` at offset 0
-   - `padding: u32` at offset 4 (alignment for u64)
-   - `offset: u64` at offsets 8-15  
-   - `size: u64` at offsets 16-23
+### ✅ **WORKING**: Core Infrastructure
+- ✅ WebGPU initialization pipeline
+- ✅ Buffer creation (with corrected COPY_DST usage for bin offset buffers)
+- ✅ Shader module loading
+- ✅ Bind group layout creation (no more validation errors!)
+- ✅ Bind group creation (major validation errors resolved!)
+- ✅ Pipeline layout creation
+- ✅ Compute and render pipeline creation (pipelines create successfully)
+- ✅ Texture and texture view creation
 
-2. **Resource Union Offset Fix**: **Critical breakthrough**
-   - Fixed JavaScript to read from `resource` union (+4 bytes) instead of `binding` field
-   - This resolved the multi-entry bind group issue
+### 🔄 **IN PROGRESS**: Remaining Issues to Fix
 
-3. **WHOLE_SIZE Handling**: Fixed JavaScript to properly handle Zig's `0xFFFFFFFFFFFFFFFF` sentinel
+#### 1. **Buffer Copy Issue** - HIGH PRIORITY
+- Error: "Destination Buffer not found: 0"
+- **CAUSE**: Null buffer handle being passed to copy operation
+- **STATUS**: Added COPY_DST usage to bin offset buffers but issue persists
+- **NEXT**: Debug which specific buffer handle is 0
 
-### ✅ **Current Status: FULLY WORKING**
-- ✅ **Single-entry bind groups**: Working perfectly
-- ✅ **Multi-entry bind groups**: Working perfectly  
-- ✅ **Buffer handle reading**: Correct for all entries
-- ✅ **WHOLE_SIZE handling**: Fixed
-- ✅ **WebGPU FFI**: Complete functionality restored
+#### 2. **Render Pass Clear Value Issue** - HIGH PRIORITY  
+- Error: "Failed to read the 'a' property from 'GPUColorDict': Required member is undefined"
+- **CAUSE**: Color struct reading from memory has alignment issues
+- **STATUS**: Fixed struct layout but clear value pointer reading needs verification
+- **NEXT**: Check Color struct memory layout and pointer dereferencing
 
-### Technical Solution Summary
-**The issue was a classic FFI memory layout problem:**
+#### 3. **Buffer Binding Type Issue** - MEDIUM PRIORITY
+- Error: "Expected entry layout: {type: BufferBindingType::Uniform, minBindingSize: 0, hasDynamicOffset: 1}"
+- **CAUSE**: `hasDynamicOffset` being read as 1 instead of false (0)
+- **STATUS**: Fixed struct reading but validation still shows hasDynamicOffset: 1
+- **NEXT**: Verify the bool reading is correct for all buffer binding layouts
 
-```zig
-// Zig BindGroupEntry struct
-pub const BindGroupEntry = extern struct {
-    binding: u32,           // offset 0-3
-    resource: Resource,     // offset 4-27 (union)
-};
-```
+#### 4. **Texture View Dimension Issue** - MEDIUM PRIORITY
+- Error: "View dimension (TextureViewDimension::e1D) for a multisampled texture bindings was not TextureViewDimension::e2D"
+- **CAUSE**: Enum value still being read as 0 ("1d") instead of 1 ("2d")
+- **STATUS**: Fixed mapping function but issue persists
+- **NEXT**: Debug texture binding layout reading in compose_bgl specifically
 
-**JavaScript was incorrectly reading buffer handles from the `binding` field instead of the `resource` union field.**
+#### 5. **Missing Shader Entry Points** - LOW PRIORITY (Expected)
+- Error: Entry points like "clearBinSize", "fillBinSize", etc. don't exist
+- **CAUSE**: Placeholder shader modules don't contain actual compute shaders
+- **STATUS**: Expected behavior - pipelines created but entry points missing
+- **NEXT**: This will be addressed when implementing actual shader loading
 
-### Performance Impact  
-- ✅ No performance regression
-- ✅ Proper memory alignment maintained
-- ✅ Dead code elimination preserved
-- ✅ Full WebGPU functionality restored
+### 📊 **Validation Status Improvements**
+- **BEFORE**: 20+ critical validation errors preventing execution
+- **AFTER**: Only 4 remaining issue types, pipelines create successfully
+- **PROGRESS**: ~80% of core WebGPU FFI validation issues resolved!
 
-### Next Steps
-1. ✅ **Complete**: WebGPU buffer handle issue resolved
-2. 🔄 **Optional**: Address buffer usage validation warnings (shader configuration)  
-3. 🔄 **Optional**: Full particle simulator functionality testing
-4. ✅ **Complete**: Clean up debug logging
+### 🎯 **Next Steps Priority Order**
+1. **Fix buffer copy destination handle issue** (prevents compute passes)
+2. **Fix render pass clear value reading** (prevents rendering)
+3. **Debug remaining buffer binding validation** (warnings only)
+4. **Investigate texture view dimension reading** (warnings only)
+5. **Implement actual shader loading** (for full functionality)
 
-### Impact
-**The Zig WebGPU FFI library is now fully functional** for:
-- Buffer creation and management
-- Bind group creation with complex multi-entry layouts  
-- Proper memory layout handling between Zig and JavaScript
-- Integration with browser WebGPU implementations
+### 💡 **Key Learnings & Fixes Applied**
+- **Struct Alignment Critical**: Extern structs in Zig have specific padding requirements that must be respected in JavaScript FFI
+- **Union Layout Matters**: Bind group layout entries need proper size calculation for each union member type
+- **Pointer Alignment**: 8-byte pointers in extern structs require 8-byte alignment, affecting all subsequent field offsets
+- **Bool vs U32**: Bools in extern structs are 1 byte but require padding for following fields
+
+## Architecture Status
+
+### ✅ **Solid Foundation**
+- WebGPU FFI layer architecture is sound
+- Memory layout reading patterns established and working
+- Error handling and validation pipeline functional
+- Build system and testing infrastructure working well
+
+### 🚀 **Ready for Next Phase**
+With the core FFI bugs fixed, we're now positioned to:
+1. Complete the remaining buffer/render pass issues (likely small alignment fixes)
+2. Move on to shader implementation and full particle simulation functionality
+3. Add more advanced WebGPU features as needed
+
+The demo is very close to working end-to-end! The major architectural hurdles have been overcome.

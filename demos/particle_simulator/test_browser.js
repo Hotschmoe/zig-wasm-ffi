@@ -6,7 +6,7 @@ const path = require('path');
 
 async function runBrowserTest() {
     // Limit console output to prevent spam
-    const MAX_OUTPUT_LINES = 250;
+    const MAX_OUTPUT_LINES = 200;
     let outputLineCount = 0;
     let outputLimitReached = false;
 
@@ -46,17 +46,28 @@ async function runBrowserTest() {
     });
     
     server.listen(8000);
-    console.log('Server started on http://localhost:8000');
+    console.log('🚀 Server started on http://localhost:8000');
     
     try {
         const browser = await puppeteer.launch({ headless: 'new' });
         const page = await browser.newPage();
         
-        // Capture all console messages
+        // Capture console messages with filtering
         page.on('console', msg => {
             const type = msg.type();
             const text = msg.text();
-            logWithLimit(console.log, `[${type.toUpperCase()}] ${text}`);
+            
+            // Filter out very verbose debug messages but keep important ones
+            if (text.includes('DEBUG') && (
+                text.includes('TextureBindingLayout') ||
+                text.includes('BufferBindingLayout') ||
+                text.includes('clearValue') ||
+                text.includes('copyBufferToBuffer')
+            )) {
+                logWithLimit(console.log, `[${type.toUpperCase()}] ${text}`);
+            } else if (!text.includes('DEBUG')) {
+                logWithLimit(console.log, `[${type.toUpperCase()}] ${text}`);
+            }
         });
         
         // Enhanced error capturing with stack traces

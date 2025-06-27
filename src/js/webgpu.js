@@ -1083,6 +1083,8 @@ export const webGPUNativeImports = {
 
     env_wgpu_command_encoder_copy_buffer_to_buffer_js: function(encoder_handle, source_buffer_handle, source_offset_low, source_offset_high, destination_buffer_handle, destination_offset_low, destination_offset_high, size_low, size_high) {
         try {
+            console.log(`[webgpu.js] DEBUG copyBufferToBuffer: encoder=${encoder_handle}, src=${source_buffer_handle}, dst=${destination_buffer_handle}`);
+            
             const encoder = globalWebGPU.commandEncoders[encoder_handle];
             if (!encoder) return recordError(`CommandEncoder not found: ${encoder_handle}`);
             const sourceBuffer = globalWebGPU.buffers[source_buffer_handle];
@@ -1093,6 +1095,8 @@ export const webGPUNativeImports = {
             const sourceOffset = combineToBigInt(source_offset_low, source_offset_high);
             const destinationOffset = combineToBigInt(destination_offset_low, destination_offset_high);
             const size = combineToBigInt(size_low, size_high);
+
+            console.log(`[webgpu.js] DEBUG copyBufferToBuffer: srcOffset=${sourceOffset}, dstOffset=${destinationOffset}, size=${size}`);
 
             encoder.copyBufferToBuffer(
                 sourceBuffer, Number(sourceOffset), 
@@ -1246,6 +1250,7 @@ export const webGPUNativeImports = {
             if (!descriptor_ptr) return recordError("RenderPassDescriptor pointer is null");
 
             const wasmMemoryU32 = new Uint32Array(globalWebGPU.memory.buffer);
+            const wasmMemoryU8 = new Uint8Array(globalWebGPU.memory.buffer);
             const wasmMemoryF64 = new Float64Array(globalWebGPU.memory.buffer);
             let offset_u32 = descriptor_ptr / 4;
 
@@ -1263,34 +1268,66 @@ export const webGPUNativeImports = {
             let ca_offset_bytes = color_attachments_ptr;
             for (let i = 0; i < color_attachments_len; i++) {
                 const jsAttachment = {};
-                let ca_current_offset_u32 = ca_offset_bytes / 4;
                 
-                const view_handle = wasmMemoryU32[ca_current_offset_u32++];
+                // Zig RenderPassColorAttachment struct layout:
+                // view: TextureView (u32, offset 0)
+                // resolve_target: TextureView (u32, offset 4)
+                // resolve_target_is_present: bool (1 byte, offset 8)
+                // padding (3 bytes, offset 9-11)
+                // clear_value: ?*const Color (8 bytes, offset 16-23, pointer aligned)
+                // load_op: GPULoadOp (u32, offset 24)
+                // store_op: GPUStoreOp (u32, offset 28)
+                // Total size: 32 bytes
+                
+                const view_handle = wasmMemoryU32[ca_offset_bytes / 4];
                 jsAttachment.view = globalWebGPU.textureViews[view_handle];
                 if (!jsAttachment.view) return recordError(`TextureView not found for colorAttachment ${i}: handle ${view_handle}`);
 
-                const resolve_target_handle = wasmMemoryU32[ca_current_offset_u32++];
-                if (resolve_target_handle) {
+                const resolve_target_handle = wasmMemoryU32[(ca_offset_bytes + 4) / 4];
+                const resolve_target_is_present = wasmMemoryU8[ca_offset_bytes + 8] !== 0;
+                if (resolve_target_is_present && resolve_target_handle) {
                     jsAttachment.resolveTarget = globalWebGPU.textureViews[resolve_target_handle];
                     if (!jsAttachment.resolveTarget) return recordError(`Resolve Target TextureView not found for colorAttachment ${i}: handle ${resolve_target_handle}`);
                 }
 
-                const clear_value_ptr = wasmMemoryU32[ca_current_offset_u32++];
-                if (clear_value_ptr) {
-                    let cv_offset_f64 = clear_value_ptr / 8; // Color struct is 4 * f64
-                    jsAttachment.clearValue = {
-                        r: wasmMemoryF64[cv_offset_f64++],
-                        g: wasmMemoryF64[cv_offset_f64++],
-                        b: wasmMemoryF64[cv_offset_f64++],
-                        a: wasmMemoryF64[cv_offset_f64++],
-                    };
+                // Read clear_value pointer (8 bytes at offset 16)
+                // Fixed struct alignment: clear_value is now at offset 16 (not 12)
+                const clear_value_ptr_low = wasmMemoryU32[(ca_offset_bytes + 16) / 4];
+                const clear_value_ptr_high = wasmMemoryU32[(ca_offset_bytes + 20) / 4];
+                const clear_value_ptr = Number(combineToBigInt(clear_value_ptr_low, clear_value_ptr_high));
+                
+                // Only log debug info for problematic clear values
+                if (clear_value_ptr > 0 && clear_value_ptr < 1000) {
+                    console.log(`[webgpu.js] DEBUG clearValue: ptr_low=${clear_value_ptr_low}, ptr_high=${clear_value_ptr_high}, ptr=${clear_value_ptr}`);
                 }
                 
-                jsAttachment.loadOp = ZIG_LOAD_OP_TO_JS[wasmMemoryU32[ca_current_offset_u32++]];
-                jsAttachment.storeOp = ZIG_STORE_OP_TO_JS[wasmMemoryU32[ca_current_offset_u32++]];
+                if (clear_value_ptr) {
+                    let cv_offset_f64 = clear_value_ptr / 8; // Color struct is 4 * f64
+                    // Bounds check
+                    if (cv_offset_f64 + 3 < wasmMemoryF64.length) {
+                        const r = wasmMemoryF64[cv_offset_f64];
+                        const g = wasmMemoryF64[cv_offset_f64 + 1];
+                        const b = wasmMemoryF64[cv_offset_f64 + 2];
+                        const a = wasmMemoryF64[cv_offset_f64 + 3];
+                        
+                        // Only log components if they seem problematic
+                        if (isNaN(r) || isNaN(g) || isNaN(b) || isNaN(a)) {
+                            console.log(`[webgpu.js] DEBUG clearValue components: r=${r}, g=${g}, b=${b}, a=${a}`);
+                        }
+                        
+                        jsAttachment.clearValue = { r, g, b, a };
+                    } else {
+                        console.warn(`[webgpu.js] Clear value pointer ${clear_value_ptr} (f64 offset ${cv_offset_f64}) out of bounds. Memory length: ${wasmMemoryF64.length}`);
+                        jsAttachment.clearValue = { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }; // Default black
+                    }
+                }
+                
+                // Fixed struct alignment: load_op and store_op are now at offsets 24 and 28 
+                jsAttachment.loadOp = ZIG_LOAD_OP_TO_JS[wasmMemoryU32[(ca_offset_bytes + 24) / 4]];
+                jsAttachment.storeOp = ZIG_STORE_OP_TO_JS[wasmMemoryU32[(ca_offset_bytes + 28) / 4]];
                 
                 jsDescriptor.colorAttachments.push(jsAttachment);
-                ca_offset_bytes += (5 * 4); // Size of RenderPassColorAttachment in u32 words (view, resolve_target, clear_value_ptr, load_op, store_op)
+                ca_offset_bytes += 32; // Size of RenderPassColorAttachment struct: 32 bytes
             }
 
             const depth_stencil_attachment_ptr = wasmMemoryU32[offset_u32++];
@@ -1971,23 +2008,26 @@ function readBindGroupLayoutDescriptorFromMemory(descriptor_ptr) {
 
 function readBufferBindingLayoutFromMemory(layout_ptr) {
     // layout_ptr is the absolute byte offset of the BufferBindingLayout struct
+    // Zig extern struct layout: type(u32), has_dynamic_offset(bool), padding(3), min_binding_size(u64)
+    // Total: 16 bytes with proper alignment
     const wasmMemoryView = new DataView(globalWebGPU.memory.buffer);
 
     const typeZig = wasmMemoryView.getUint32(layout_ptr + 0, true); // offset 0
-    const hasDynamicOffset = wasmMemoryView.getUint8(layout_ptr + 4, true) !== 0; // offset 4 (bool usually 1 byte, but check alignment)
-    // Assuming Zig aligns bool to 4 bytes in extern struct, or it's tightly packed.
-    // If bool is u8, next field is at +5. If bool is padded to u32, next is +8.
-    // Let's assume natural alignment: bool is 1 byte. minBindingSize is u64, so it should be 8-byte aligned.
-    // So, type (u32), has_dynamic_offset (u8), padding (3 bytes), minBindingSize (u64)
-    // Or: type (u32), has_dynamic_offset (u32 for safety in FFI extern struct), minBindingSize(u64)
-    // The previous JS code had wasmMemoryU32[offset32++] for hasDynamicOffset, implying it was read as u32.
-    // Sticking to that assumption for less disruption initially.
-    // const hasDynamicOffset = wasmMemoryU32[layout_ptr/4 + 1] !== 0; // If bool is treated as u32 by Zig in extern struct
-    const minBindingSize = wasmMemoryView.getBigUint64(layout_ptr + 8, true); // offset 8 (type:4, hasDynamicOffsetAsU32:4)
+    const hasDynamicOffsetByte = wasmMemoryView.getUint8(layout_ptr + 4); // offset 4 (bool is 1 byte)
+    const hasDynamicOffset = hasDynamicOffsetByte !== 0;
+    // bool is followed by 3 padding bytes due to u64 alignment requirement
+    const minBindingSize = wasmMemoryView.getBigUint64(layout_ptr + 8, true); // offset 8 (after padding)
+
+    // Debug logging for buffer binding layout (only log issues)
+    // if (hasDynamicOffsetByte > 1) {
+    //     console.log(`[webgpu.js] DEBUG BufferBindingLayout: type=${typeZig}, hasDynamicOffsetByte=${hasDynamicOffsetByte}, hasDynamicOffset=${hasDynamicOffset}, minBindingSize=${minBindingSize}`);
+    // }
+    
+    const jsType = mapBufferBindingTypeZigToJs(typeZig);
 
     return {
-        type: mapBufferBindingTypeZigToJs(typeZig),
-        hasDynamicOffset: hasDynamicOffset, // Read as u8, check if this assumption matches Zig's extern layout
+        type: jsType,
+        hasDynamicOffset: hasDynamicOffset,
         minBindingSize: Number(minBindingSize),
     };
 }
@@ -1998,13 +2038,23 @@ function readTextureBindingLayoutFromMemory(layout_ptr) {
 
     const sampleTypeZig = wasmMemoryView.getUint32(layout_ptr + 0, true); // offset 0
     const viewDimensionZig = wasmMemoryView.getUint32(layout_ptr + 4, true); // offset 4
-    const multisampled = wasmMemoryView.getUint8(layout_ptr + 8, true) !== 0; // offset 8 (bool)
+    const multisampled = wasmMemoryView.getUint8(layout_ptr + 8) !== 0; // offset 8 (bool)
     // Similar alignment consideration for bool as in BufferBindingLayout
     // Assuming sampleType(u32), viewDimension(u32), multisampled(u32 if padded, or u8 then pad for total struct size)
 
+    // Debug logging for texture binding layout (only log issues)
+    // if (viewDimensionZig === 0 || multisampled === true) {
+    //     console.log(`[webgpu.js] DEBUG TextureBindingLayout: sampleType=${sampleTypeZig}, viewDimension=${viewDimensionZig}, multisampled=${multisampled}`);
+    // }
+
+    const jsViewDimension = mapTextureViewDimensionZigToJs(viewDimensionZig);
+    // if (viewDimensionZig === 0) {
+    //     console.log(`[webgpu.js] DEBUG Mapped viewDimension: ${viewDimensionZig} -> ${jsViewDimension}`);
+    // }
+
     return {
         sampleType: mapTextureSampleTypeZigToJs(sampleTypeZig),
-        viewDimension: mapTextureViewDimensionZigToJs(viewDimensionZig), 
+        viewDimension: jsViewDimension, 
         multisampled: multisampled,
     };
 }

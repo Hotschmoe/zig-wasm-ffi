@@ -434,16 +434,18 @@ pub const Renderer = struct {
             .mappedAtCreation = false,
         });
 
-        self.bin_offset_buffer_a = try webgpu.deviceCreateBuffer(device, &webgpu.BufferDescriptor{
-            .label = "bin_offset_buffer_a",
-            .size = bin_offset_buffer_size,
-            .usage = webgpu.GPUBufferUsage.STORAGE | webgpu.GPUBufferUsage.COPY_SRC,
-            .mappedAtCreation = false,
-        });
+        // Create bin_offset_buffer_b first to test if there's an allocation issue
         self.bin_offset_buffer_b = try webgpu.deviceCreateBuffer(device, &webgpu.BufferDescriptor{
             .label = "bin_offset_buffer_b",
             .size = bin_offset_buffer_size,
-            .usage = webgpu.GPUBufferUsage.STORAGE | webgpu.GPUBufferUsage.COPY_SRC,
+            .usage = webgpu.GPUBufferUsage.STORAGE | webgpu.GPUBufferUsage.COPY_SRC | webgpu.GPUBufferUsage.COPY_DST,
+            .mappedAtCreation = false,
+        });
+
+        self.bin_offset_buffer_a = try webgpu.deviceCreateBuffer(device, &webgpu.BufferDescriptor{
+            .label = "bin_offset_buffer_a",
+            .size = bin_offset_buffer_size,
+            .usage = webgpu.GPUBufferUsage.STORAGE | webgpu.GPUBufferUsage.COPY_SRC | webgpu.GPUBufferUsage.COPY_DST,
             .mappedAtCreation = false,
         });
 
@@ -953,131 +955,230 @@ pub const Renderer = struct {
     }
 
     fn createPipelines(self: *Renderer, device: webgpu.Device) !void {
-        const preferred_canvas_format = self.wgpu_handler.getPreferredCanvasFormat() orelse webgpu.TextureFormat.bgra8unorm; // Default if not available
-
         // --- Compute Pipelines ---
         self.bin_clear_size_pipeline = try webgpu.deviceCreateComputePipeline(device, &webgpu.ComputePipelineDescriptor{
             .label = "bin_clear_size_pipeline",
             .layout = self.binning_pl,
-            .compute = .{ .module = self.binning_module, .entry_point = "clearBinSize" },
+            .compute = .{ .module = self.binning_module, .entry_point = "cs_clear_bin_counts" },
         });
+
         self.bin_fill_size_pipeline = try webgpu.deviceCreateComputePipeline(device, &webgpu.ComputePipelineDescriptor{
             .label = "bin_fill_size_pipeline",
             .layout = self.binning_pl,
-            .compute = .{ .module = self.binning_module, .entry_point = "fillBinSize" },
+            .compute = .{ .module = self.binning_module, .entry_point = "cs_fill_bin_counts" },
         });
+
+        // Prefix Sum pipeline
         self.bin_prefix_sum_pipeline = try webgpu.deviceCreateComputePipeline(device, &webgpu.ComputePipelineDescriptor{
             .label = "bin_prefix_sum_pipeline",
             .layout = self.prefix_sum_pl,
-            .compute = .{ .module = self.prefix_sum_module, .entry_point = "prefixSumStep" },
+            .compute = .{ .module = self.prefix_sum_module, .entry_point = "cs_prefix_sum_step" },
         });
+
+        // Sort pipelines
         self.particle_sort_clear_size_pipeline = try webgpu.deviceCreateComputePipeline(device, &webgpu.ComputePipelineDescriptor{
             .label = "particle_sort_clear_size_pipeline",
-            .layout = self.particle_sort_pl, // Uses BGLs for sorted particles and sim options
-            .compute = .{ .module = self.sort_module, .entry_point = "clearBinSize" },
+            .layout = self.particle_sort_pl,
+            .compute = .{ .module = self.sort_module, .entry_point = "cs_clear_sort_indices" },
         });
+
         self.particle_sort_pipeline = try webgpu.deviceCreateComputePipeline(device, &webgpu.ComputePipelineDescriptor{
             .label = "particle_sort_pipeline",
             .layout = self.particle_sort_pl,
-            .compute = .{ .module = self.sort_module, .entry_point = "sortParticles" },
+            .compute = .{ .module = self.sort_module, .entry_point = "cs_sort_particles" },
         });
+
+        // Compute Forces pipeline
         self.particle_compute_forces_pipeline = try webgpu.deviceCreateComputePipeline(device, &webgpu.ComputePipelineDescriptor{
             .label = "particle_compute_forces_pipeline",
             .layout = self.particle_compute_forces_pl,
-            .compute = .{ .module = self.compute_module, .entry_point = "computeForces" }, // From particle_compute.wgsl
+            .compute = .{ .module = self.compute_module, .entry_point = "main" },
         });
+
+        // Particle Advance pipeline (uses the same main entry point)
         self.particle_advance_pipeline = try webgpu.deviceCreateComputePipeline(device, &webgpu.ComputePipelineDescriptor{
             .label = "particle_advance_pipeline",
             .layout = self.particle_advance_pl,
-            .compute = .{ .module = self.compute_module, .entry_point = "particleAdvance" }, // From particle_compute.wgsl
+            .compute = .{ .module = self.compute_module, .entry_point = "main" },
         });
 
         // --- Render Pipelines ---
-        // Common blend state for additive blending on HDR target
-        const additive_blend_state = webgpu.BlendState{
-            .color = .{ .src_factor = .src_alpha, .dst_factor = .one, .operation = .add },
-            .alpha = .{ .src_factor = .one, .dst_factor = .one, .operation = .add },
+        // Common fragment states for the render pipelines
+        const glow_fragment_state = webgpu.FragmentState{
+            .module = self.render_module,
+            .entry_point = "fs_glow",
+            .targets = &[_]webgpu.ColorTargetState{
+                .{
+                    .format = HDR_FORMAT,
+                    .blend = &webgpu.BlendState{
+                        .color = .{
+                            .operation = .add,
+                            .src_factor = .src_alpha,
+                            .dst_factor = .one,
+                        },
+                        .alpha = .{
+                            .operation = .add,
+                            .src_factor = .one,
+                            .dst_factor = .one,
+                        },
+                    },
+                    .write_mask = 0xF,
+                },
+            },
+            .targets_len = 1,
         };
-        const particle_hdr_target_state = webgpu.ColorTargetState{
-            .format = HDR_FORMAT,
-            .blend = &additive_blend_state,
-            .write_mask = webgpu.ColorWriteMask.ALL,
+
+        const circle_fragment_state = webgpu.FragmentState{
+            .module = self.render_module,
+            .entry_point = "fs_circle",
+            .targets = &[_]webgpu.ColorTargetState{
+                .{
+                    .format = HDR_FORMAT,
+                    .blend = &webgpu.BlendState{
+                        .color = .{
+                            .operation = .add,
+                            .src_factor = .src_alpha,
+                            .dst_factor = .one,
+                        },
+                        .alpha = .{
+                            .operation = .add,
+                            .src_factor = .one,
+                            .dst_factor = .one,
+                        },
+                    },
+                    .write_mask = 0xF,
+                },
+            },
+            .targets_len = 1,
+        };
+
+        const point_fragment_state = webgpu.FragmentState{
+            .module = self.render_module,
+            .entry_point = "fs_point",
+            .targets = &[_]webgpu.ColorTargetState{
+                .{
+                    .format = HDR_FORMAT,
+                    .blend = &webgpu.BlendState{
+                        .color = .{
+                            .operation = .add,
+                            .src_factor = .src_alpha,
+                            .dst_factor = .one,
+                        },
+                        .alpha = .{
+                            .operation = .add,
+                            .src_factor = .one,
+                            .dst_factor = .one,
+                        },
+                    },
+                    .write_mask = 0xF,
+                },
+            },
+            .targets_len = 1,
+        };
+
+        const compose_fragment_state = webgpu.FragmentState{
+            .module = self.compose_module,
+            .entry_point = "fragmentMain",
+            .targets = &[_]webgpu.ColorTargetState{
+                .{
+                    .format = .bgra8unorm, // Surface format
+                    .write_mask = 0xF,
+                },
+            },
+            .targets_len = 1,
         };
 
         self.particle_render_glow_pipeline = try webgpu.deviceCreateRenderPipeline(device, &webgpu.RenderPipelineDescriptor{
             .label = "particle_render_glow_pipeline",
             .layout = self.particle_render_pl,
-            .vertex = .{ .module = self.render_module, .entry_point = "vertexGlow" },
-            .primitive = .{
+            .vertex = .{
+                .module = self.render_module,
+                .entry_point = "vs_glow",
+            },
+            .primitive = webgpu.PrimitiveState{
                 .topology = .triangle_list,
                 .strip_index_format = .uint16,
                 .strip_index_format_is_present = false,
+                .front_face = .ccw,
+                .cull_mode = .none,
             },
-            .fragment = &webgpu.FragmentState{
-                .module = self.render_module,
-                .entry_point = "fragmentGlow",
-                .targets = &[_]webgpu.ColorTargetState{particle_hdr_target_state},
-                .targets_len = 1,
+            .fragment = &glow_fragment_state,
+            .depth_stencil = null,
+            .multisample = webgpu.MultisampleState{
+                .count = 1,
+                .mask = 0xFFFFFFFF,
+                .alpha_to_coverage_enabled = false,
             },
-            .multisample = .{ .count = 1, .mask = 0xFFFFFFFF }, // Default multisample state
         });
+
         self.particle_render_circle_pipeline = try webgpu.deviceCreateRenderPipeline(device, &webgpu.RenderPipelineDescriptor{
             .label = "particle_render_circle_pipeline",
             .layout = self.particle_render_pl,
-            .vertex = .{ .module = self.render_module, .entry_point = "vertexCircle" },
-            .primitive = .{
+            .vertex = .{
+                .module = self.render_module,
+                .entry_point = "vs_circle",
+            },
+            .primitive = webgpu.PrimitiveState{
                 .topology = .triangle_list,
                 .strip_index_format = .uint16,
                 .strip_index_format_is_present = false,
+                .front_face = .ccw,
+                .cull_mode = .none,
             },
-            .fragment = &webgpu.FragmentState{
-                .module = self.render_module,
-                .entry_point = "fragmentCircle",
-                .targets = &[_]webgpu.ColorTargetState{particle_hdr_target_state},
-                .targets_len = 1,
+            .fragment = &circle_fragment_state,
+            .depth_stencil = null,
+            .multisample = webgpu.MultisampleState{
+                .count = 1,
+                .mask = 0xFFFFFFFF,
+                .alpha_to_coverage_enabled = false,
             },
-            .multisample = .{ .count = 1, .mask = 0xFFFFFFFF },
         });
+
         self.particle_render_point_pipeline = try webgpu.deviceCreateRenderPipeline(device, &webgpu.RenderPipelineDescriptor{
             .label = "particle_render_point_pipeline",
             .layout = self.particle_render_pl,
-            .vertex = .{ .module = self.render_module, .entry_point = "vertexPoint" },
-            .primitive = .{
+            .vertex = .{
+                .module = self.render_module,
+                .entry_point = "vs_point",
+            },
+            .primitive = webgpu.PrimitiveState{
                 .topology = .triangle_list,
                 .strip_index_format = .uint16,
                 .strip_index_format_is_present = false,
+                .front_face = .ccw,
+                .cull_mode = .none,
             },
-            .fragment = &webgpu.FragmentState{
-                .module = self.render_module,
-                .entry_point = "fragmentPoint",
-                .targets = &[_]webgpu.ColorTargetState{particle_hdr_target_state},
-                .targets_len = 1,
+            .fragment = &point_fragment_state,
+            .depth_stencil = null,
+            .multisample = webgpu.MultisampleState{
+                .count = 1,
+                .mask = 0xFFFFFFFF,
+                .alpha_to_coverage_enabled = false,
             },
-            .multisample = .{ .count = 1, .mask = 0xFFFFFFFF },
         });
 
-        // Compose pipeline (output to screen)
-        const compose_target_state = webgpu.ColorTargetState{
-            .format = preferred_canvas_format,
-            // No blending for final compose, overwrite
-            .write_mask = webgpu.ColorWriteMask.ALL,
-        };
+        // Compose pipeline
         self.compose_pipeline = try webgpu.deviceCreateRenderPipeline(device, &webgpu.RenderPipelineDescriptor{
             .label = "compose_pipeline",
             .layout = self.compose_pl,
-            .vertex = .{ .module = self.compose_module, .entry_point = "vertexMain" },
-            .primitive = .{
+            .vertex = .{
+                .module = self.compose_module,
+                .entry_point = "vertexMain",
+            },
+            .primitive = webgpu.PrimitiveState{
                 .topology = .triangle_list,
                 .strip_index_format = .uint16,
                 .strip_index_format_is_present = false,
+                .front_face = .ccw,
+                .cull_mode = .none,
             },
-            .fragment = &webgpu.FragmentState{
-                .module = self.compose_module,
-                .entry_point = "fragmentMain",
-                .targets = &[_]webgpu.ColorTargetState{compose_target_state},
-                .targets_len = 1,
+            .fragment = &compose_fragment_state,
+            .depth_stencil = null,
+            .multisample = webgpu.MultisampleState{
+                .count = 1,
+                .mask = 0xFFFFFFFF,
+                .alpha_to_coverage_enabled = false,
             },
-            .multisample = .{ .count = 1, .mask = 0xFFFFFFFF },
         });
     }
 
@@ -1272,12 +1373,11 @@ pub const Renderer = struct {
                 self.next_bin_offset_buffer = self.bin_offset_buffer_b; // B is now scratch
                 // webutils.log("DEBUG: Prefix sum result is in bin_offset_buffer_a as expected."); // Adjusted log
             } else {
-                // Result is in bin_offset_buffer_b. Need to copy to bin_offset_buffer_a for subsequent passes.
-                // webutils.log("DEBUG: Prefix sum result is in bin_offset_buffer_b. Copying to bin_offset_buffer_a."); // Adjusted log
-                const size_to_copy = @sizeOf(u32) * (self.bin_count + 1);
-                webgpu.commandEncoderCopyBufferToBuffer(encoder, self.bin_offset_buffer_b, 0, self.bin_offset_buffer_a, 0, size_to_copy);
-                self.current_bin_offset_buffer = self.bin_offset_buffer_a; // A now has the results
-                self.next_bin_offset_buffer = self.bin_offset_buffer_b; // B is scratch
+                // Result is in bin_offset_buffer_b.
+                // WORKAROUND: Skip problematic copy, keep result in buffer_b and update assignment
+                webutils.log("DEBUG: Prefix sum result is in bin_offset_buffer_b. Using buffer_b as current instead of copying.");
+                self.current_bin_offset_buffer = self.bin_offset_buffer_b; // B has the results
+                self.next_bin_offset_buffer = self.bin_offset_buffer_a; // A is scratch
             }
         }
         // webutils.log("DEBUG: renderFrame: Prefix Sum Pass Complete. Final offsets ensured in '" ++ (if (self.current_bin_offset_buffer == self.bin_offset_buffer_a) "binA" else "binB") ++ "' (bin_offset_buffer_a). Scratch bin is '" ++ (if (self.next_bin_offset_buffer == self.bin_offset_buffer_a) "binA" else "binB") ++ "'."); // Adjusted log
