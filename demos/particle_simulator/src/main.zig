@@ -19,6 +19,9 @@ const Particle = extern struct {
 var simple_renderer: ?SimpleRenderer = null;
 var allocator: std.mem.Allocator = undefined;
 
+// Global static clear color to avoid pointer out-of-scope issues
+const static_clear_color = webgpu.Color{ .r = 0.1, .g = 0.1, .b = 0.2, .a = 1.0 };
+
 const SimpleRenderer = struct {
     device: webgpu.Device,
     queue: webgpu.Queue,
@@ -297,8 +300,6 @@ const SimpleRenderer = struct {
             .label = "render_encoder",
         });
 
-        const clear_color = webgpu.Color{ .r = 0.1, .g = 0.1, .b = 0.2, .a = 1.0 };
-
         const render_pass = try webgpu.commandEncoderBeginRenderPass(command_encoder, &webgpu.RenderPassDescriptor{
             .label = "render_pass",
             .color_attachments = &[_]webgpu.RenderPassColorAttachment{
@@ -308,7 +309,7 @@ const SimpleRenderer = struct {
                     .resolve_target_is_present = false,
                     .load_op = .clear,
                     .store_op = .store,
-                    .clear_value = &clear_color,
+                    .clear_value = &static_clear_color,
                 },
             },
             .color_attachments_len = 1,

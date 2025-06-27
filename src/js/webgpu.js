@@ -884,6 +884,7 @@ export const webGPUNativeImports = {
             const wasmMemoryF64 = new Float64Array(globalWebGPU.memory.buffer);
             const wasmMemoryI32 = new Int32Array(globalWebGPU.memory.buffer);
             const wasmMemoryF32 = new Float32Array(globalWebGPU.memory.buffer);
+            const wasmMemoryU64 = new BigUint64Array(globalWebGPU.memory.buffer); // Added missing declaration
             let descriptor_offset_u32 = descriptor_ptr / 4;
 
             // Helper function to read ProgrammableStageDescriptor (used by compute and vertex/fragment stages)
@@ -943,11 +944,11 @@ export const webGPUNativeImports = {
                         let attr_offset_bytes = attributes_ptr;
                         for (let j = 0; j < attributes_len; j++) {
                             jsVbLayout.attributes.push({
-                                format: ZIG_VERTEX_FORMAT_TO_JS[wasmMemoryU32[attr_offset_bytes / 4]],
-                                offset: Number(wasmMemoryU64[(attr_offset_bytes + 4) / 8]), // format u32, offset u64
-                                shaderLocation: wasmMemoryU32[(attr_offset_bytes + 12) / 4], // after offset u64
+                                format: ZIG_VERTEX_FORMAT_TO_JS[wasmMemoryU32[attr_offset_bytes / 4]], // offset 0: format (u32)
+                                offset: Number(wasmMemoryU64[(attr_offset_bytes + 8) / 8]), // offset 8: offset (u64) after 4-byte padding
+                                shaderLocation: wasmMemoryU32[(attr_offset_bytes + 16) / 4], // offset 16: shader_location (u32)
                             });
-                            attr_offset_bytes += 16; // sizeof(VertexAttribute): format(u32), offset(u64), shader_location(u32) = 4+8+4 = 16
+                            attr_offset_bytes += 24; // sizeof(VertexAttribute): format(u32) + padding(4) + offset(u64) + shader_location(u32) + padding(4) = 24 bytes
                         }
                     }
                     jsDescriptor.vertex.buffers.push(jsVbLayout);
