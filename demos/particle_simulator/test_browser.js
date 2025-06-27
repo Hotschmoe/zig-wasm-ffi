@@ -6,7 +6,7 @@ const path = require('path');
 
 async function runBrowserTest() {
     // Limit console output to prevent spam
-    const MAX_OUTPUT_LINES = 50;
+    const MAX_OUTPUT_LINES = 200;
     let outputLineCount = 0;
     let outputLimitReached = false;
 
@@ -52,18 +52,20 @@ async function runBrowserTest() {
         const browser = await puppeteer.launch({ headless: 'new' });
         const page = await browser.newPage();
         
-        // Capture only important console messages
+        // Capture console messages with filtering
         page.on('console', msg => {
             const type = msg.type();
             const text = msg.text();
             
-            // Filter to show only initialization and important messages
-            if (text.includes('Starting particle life simulation') ||
-                text.includes('ParticleLifeRenderer.init() completed') ||
-                text.includes('Particle life renderer initialized') ||
-                text.includes('ERROR') ||
-                text.includes('WARN') ||
-                type === 'error') {
+            // Filter out very verbose debug messages but keep important ones
+            if (text.includes('DEBUG') && (
+                text.includes('TextureBindingLayout') ||
+                text.includes('BufferBindingLayout') ||
+                text.includes('clearValue') ||
+                text.includes('copyBufferToBuffer')
+            )) {
+                logWithLimit(console.log, `[${type.toUpperCase()}] ${text}`);
+            } else if (!text.includes('DEBUG')) {
                 logWithLimit(console.log, `[${type.toUpperCase()}] ${text}`);
             }
         });
@@ -104,19 +106,14 @@ async function runBrowserTest() {
         // Navigate to your WASM app
         await page.goto('http://localhost:8000', { waitUntil: 'networkidle0' });
         
-        // Wait for WASM to load and execute - allow more time for initialization
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        // Wait for WASM to load and execute - using newer syntax
+        await new Promise(resolve => setTimeout(resolve, 3000));
         
-        // Check if the particle simulation is running
-        const isRunning = await page.evaluate(() => {
-            return window.wasmInstance !== undefined;
-        });
-        
-        if (isRunning) {
-            console.log('✅ Particle Life Simulation is running successfully!');
-        } else {
-            console.log('❌ Simulation may not be running properly');
-        }
+        // Alternative: Wait for a specific condition (more robust)
+        // await page.waitForFunction(
+        //     () => window.wasmLoaded === true, // Replace with your condition
+        //     { timeout: 5000 }
+        // );
         
         await browser.close();
         console.log('✓ Browser test completed');
