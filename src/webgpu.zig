@@ -1179,7 +1179,7 @@ pub fn commandEncoderBeginRenderPass(encoder_handle: CommandEncoder, descriptor:
 }
 
 pub fn renderPassEncoderSetPipeline(pass_handle: RenderPassEncoder, pipeline_handle: RenderPipeline) void {
-    webutils.log("RenderPassEncoder: SetPipeline...");
+    // webutils.log("RenderPassEncoder: SetPipeline...");
     if (pass_handle == 0 or pipeline_handle == 0) {
         webutils.log("E00: Invalid handle (0) for render pass or pipeline in setPipeline.");
         return;
@@ -1188,7 +1188,7 @@ pub fn renderPassEncoderSetPipeline(pass_handle: RenderPassEncoder, pipeline_han
 }
 
 pub fn renderPassEncoderSetBindGroup(pass_handle: RenderPassEncoder, index: u32, bind_group_handle: BindGroup, dynamic_offsets: ?[]const u32) void {
-    webutils.log("RenderPassEncoder: SetBindGroup...");
+    // webutils.log("RenderPassEncoder: SetBindGroup...");
     if (pass_handle == 0 or bind_group_handle == 0) {
         webutils.log("E00: Invalid handle (0) for render pass or bind group in setBindGroup.");
         return;
@@ -1224,7 +1224,7 @@ pub fn renderPassEncoderSetIndexBuffer(pass_handle: RenderPassEncoder, buffer_ha
 }
 
 pub fn renderPassEncoderDraw(pass_handle: RenderPassEncoder, vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32) void {
-    webutils.log("RenderPassEncoder: Draw...");
+    // webutils.log("RenderPassEncoder: Draw...");
     if (pass_handle == 0) {
         webutils.log("E00: Invalid render pass handle (0) in draw.");
         return;
@@ -1269,7 +1269,7 @@ pub fn renderPassEncoderWriteTimestamp(pass_handle: RenderPassEncoder, query_set
 }
 
 pub fn renderPassEncoderEnd(pass_handle: RenderPassEncoder) void {
-    webutils.log("RenderPassEncoder: EndPass...");
+    // webutils.log("RenderPassEncoder: EndPass...");
     if (pass_handle == 0) {
         webutils.log("E00: Invalid render pass handle (0) in endPass.");
         return;
