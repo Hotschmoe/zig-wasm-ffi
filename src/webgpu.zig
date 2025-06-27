@@ -1150,7 +1150,7 @@ pub const RenderPassDescriptor = extern struct {
 pub extern "env" fn env_wgpu_command_encoder_begin_render_pass_js(encoder_handle: CommandEncoder, descriptor_ptr: *const RenderPassDescriptor) callconv(.C) RenderPassEncoder;
 pub extern "env" fn env_wgpu_render_pass_encoder_set_pipeline_js(pass_handle: RenderPassEncoder, pipeline_handle: RenderPipeline) void;
 pub extern "env" fn env_wgpu_render_pass_encoder_set_bind_group_js(pass_handle: RenderPassEncoder, index: u32, bind_group_handle: BindGroup, dynamic_offsets_data_ptr: ?[*]const u32, dynamic_offsets_data_start: usize, dynamic_offsets_data_length: usize) void;
-pub extern "env" fn env_wgpu_render_pass_encoder_set_vertex_buffer_js(pass_handle: RenderPassEncoder, slot: u32, buffer_handle: ?Buffer, offset: u64, size: u64) void;
+pub extern "env" fn env_wgpu_render_pass_encoder_set_vertex_buffer_js(pass_handle: RenderPassEncoder, slot: u32, buffer_handle: Buffer, offset: u64, size: u64) void;
 pub extern "env" fn env_wgpu_render_pass_encoder_set_index_buffer_js(pass_handle: RenderPassEncoder, buffer_handle: Buffer, index_format: GPUIndexFormat, offset: u64, size: u64) void;
 pub extern "env" fn env_wgpu_render_pass_encoder_draw_js(pass_handle: RenderPassEncoder, vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32) void;
 pub extern "env" fn env_wgpu_render_pass_encoder_draw_indexed_js(pass_handle: RenderPassEncoder, index_count: u32, instance_count: u32, first_index: u32, base_vertex: i32, first_instance: u32) void;
@@ -1205,10 +1205,10 @@ pub fn renderPassEncoderSetBindGroup(pass_handle: RenderPassEncoder, index: u32,
     env_wgpu_render_pass_encoder_set_bind_group_js(pass_handle, index, bind_group_handle, data_ptr, data_start, data_length);
 }
 
-pub fn renderPassEncoderSetVertexBuffer(pass_handle: RenderPassEncoder, slot: u32, buffer_handle: ?Buffer, offset: u64, size: u64) void {
+pub fn renderPassEncoderSetVertexBuffer(pass_handle: RenderPassEncoder, slot: u32, buffer_handle: Buffer, offset: u64, size: u64) void {
     webutils.log("RenderPassEncoder: SetVertexBuffer...");
-    if (pass_handle == 0) {
-        webutils.log("E00: Invalid render pass handle (0) in setVertexBuffer.");
+    if (pass_handle == 0 or buffer_handle == 0) {
+        webutils.log("E00: Invalid handle (0) for render pass or buffer in setVertexBuffer.");
         return;
     }
     env_wgpu_render_pass_encoder_set_vertex_buffer_js(pass_handle, slot, buffer_handle, offset, size);

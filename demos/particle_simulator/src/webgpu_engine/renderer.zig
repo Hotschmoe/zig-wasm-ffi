@@ -434,7 +434,7 @@ pub const Renderer = struct {
         self.particle_buffer_b = try webgpu.deviceCreateBuffer(device, &webgpu.BufferDescriptor{
             .label = "particle_buffer_b",
             .size = particle_buffer_size,
-            .usage = webgpu.GPUBufferUsage.STORAGE | webgpu.GPUBufferUsage.COPY_DST | webgpu.GPUBufferUsage.COPY_SRC, // COPY_SRC if read back or for other copies
+            .usage = webgpu.GPUBufferUsage.STORAGE | webgpu.GPUBufferUsage.COPY_DST | webgpu.GPUBufferUsage.COPY_SRC,
             .mappedAtCreation = false,
         });
 
@@ -624,30 +624,49 @@ pub const Renderer = struct {
             .entries_len = bin_counts_bgl_entries.len,
         });
 
-        // FIXED: Binning BGL Group 1 - matches particle_binning.wgsl group 1
-        // @group(1) @binding(0) var<storage, read> particles_input: array<Particle>;
-        // @group(1) @binding(1) var<uniform> sim_params_fill: SimParams;
-        const particle_read_only_bgl_entries = [_]webgpu.BindGroupLayoutEntry{
-            webgpu.BindGroupLayoutEntry.newBuffer(0, webgpu.ShaderStage.COMPUTE, .{ .type = .read_only_storage, .has_dynamic_offset = false, .min_binding_size = 0 }),
-            webgpu.BindGroupLayoutEntry.newBuffer(1, webgpu.ShaderStage.COMPUTE, .{ .type = .uniform, .has_dynamic_offset = false, .min_binding_size = 0 }),
+        // FIXED: Binning shader needs particle read-only BGL for compute use (separate from render)
+        // For binning group 1: particles input + sim_params uniform
+        const particle_binning_read_only_bgl_entries = [_]webgpu.BindGroupLayoutEntry{
+            webgpu.BindGroupLayoutEntry.newBuffer(0, webgpu.ShaderStage.COMPUTE, .{ .type = .read_only_storage, .has_dynamic_offset = false, .min_binding_size = 0 }), // particles for binning
+            webgpu.BindGroupLayoutEntry.newBuffer(1, webgpu.ShaderStage.COMPUTE, .{ .type = .uniform, .has_dynamic_offset = false, .min_binding_size = 0 }), // sim_params uniform for binning
+        };
+
+        // Render shader compatible read-only BGL - matches particle_render.wgsl group 1
+        // @group(1) @binding(0) var<storage, read> particles: array<Particle>;
+        // @group(1) @binding(1) var<storage, read> species_list: array<Species>;
+        const particle_render_read_only_bgl_entries = [_]webgpu.BindGroupLayoutEntry{
+            webgpu.BindGroupLayoutEntry.newBuffer(0, webgpu.ShaderStage.VERTEX, .{ .type = .read_only_storage, .has_dynamic_offset = false, .min_binding_size = 0 }), // particles for render
+            webgpu.BindGroupLayoutEntry.newBuffer(1, webgpu.ShaderStage.VERTEX, .{ .type = .read_only_storage, .has_dynamic_offset = false, .min_binding_size = 0 }), // species for render
         };
         self.particle_buffer_read_only_bgl = try webgpu.deviceCreateBindGroupLayout(device, &webgpu.BindGroupLayoutDescriptor{
             .label = "particle_buffer_read_only_bgl",
-            .entries = &particle_read_only_bgl_entries,
-            .entries_len = particle_read_only_bgl_entries.len,
+            .entries = &particle_render_read_only_bgl_entries,
+            .entries_len = particle_render_read_only_bgl_entries.len,
         });
 
-        // Simple particle advance BGL (for future use if needed)
+        // Create separate binning read-only BGL
+        self.simulation_options_bgl = try webgpu.deviceCreateBindGroupLayout(device, &webgpu.BindGroupLayoutDescriptor{
+            .label = "binning_read_only_bgl", // Reuse simulation_options_bgl field for binning
+            .entries = &particle_binning_read_only_bgl_entries,
+            .entries_len = particle_binning_read_only_bgl_entries.len,
+        });
+
+        // FIXED: Particle advance BGL - matches particle_compute.wgsl exactly (all 4 bindings)
         const particle_advance_bgl_entries = [_]webgpu.BindGroupLayoutEntry{
-            webgpu.BindGroupLayoutEntry.newBuffer(0, webgpu.ShaderStage.COMPUTE, .{ .type = .storage, .has_dynamic_offset = false, .min_binding_size = 0 }),
+            webgpu.BindGroupLayoutEntry.newBuffer(0, webgpu.ShaderStage.COMPUTE, .{ .type = .storage, .has_dynamic_offset = false, .min_binding_size = 0 }), // particles storage
+            webgpu.BindGroupLayoutEntry.newBuffer(1, webgpu.ShaderStage.COMPUTE, .{ .type = .uniform, .has_dynamic_offset = false, .min_binding_size = 0 }), // sim params uniform
+            webgpu.BindGroupLayoutEntry.newBuffer(2, webgpu.ShaderStage.COMPUTE, .{ .type = .read_only_storage, .has_dynamic_offset = false, .min_binding_size = 0 }), // bin_offsets R
+            webgpu.BindGroupLayoutEntry.newBuffer(3, webgpu.ShaderStage.COMPUTE, .{ .type = .read_only_storage, .has_dynamic_offset = false, .min_binding_size = 0 }), // species_forces R
         };
+
         self.particle_advance_bgl = try webgpu.deviceCreateBindGroupLayout(device, &webgpu.BindGroupLayoutDescriptor{
             .label = "particle_advance_bgl",
             .entries = &particle_advance_bgl_entries,
             .entries_len = particle_advance_bgl_entries.len,
         });
 
-        // Camera BGL (camera UBO)
+        // Camera BGL (camera UBO) - matches particle_render.wgsl group 0
+        // @group(0) @binding(0) var<uniform> camera: Camera;
         const camera_bgl_entries = [_]webgpu.BindGroupLayoutEntry{
             webgpu.BindGroupLayoutEntry.newBuffer(0, webgpu.ShaderStage.VERTEX | webgpu.ShaderStage.FRAGMENT, .{ .type = .uniform, .has_dynamic_offset = false, .min_binding_size = 0 }),
         };
@@ -657,17 +676,9 @@ pub const Renderer = struct {
             .entries_len = camera_bgl_entries.len,
         });
 
-        // Simulation Options BGL (sim options UBO)
-        const sim_options_bgl_entries = [_]webgpu.BindGroupLayoutEntry{
-            webgpu.BindGroupLayoutEntry.newBuffer(0, webgpu.ShaderStage.COMPUTE, .{ .type = .uniform, .has_dynamic_offset = false, .min_binding_size = 0 }),
-        };
-        self.simulation_options_bgl = try webgpu.deviceCreateBindGroupLayout(device, &webgpu.BindGroupLayoutDescriptor{
-            .label = "simulation_options_bgl",
-            .entries = &sim_options_bgl_entries,
-            .entries_len = sim_options_bgl_entries.len,
-        });
+        // NOTE: simulation_options_bgl was already created above for binning read-only use
 
-        // Bin Prefix Sum BGL (source R, dest W, step_size UBO with dynamic offset)
+        // Bin Prefix Sum BGL (simplified - single group for now)
         const prefix_sum_bgl_entries = [_]webgpu.BindGroupLayoutEntry{
             webgpu.BindGroupLayoutEntry.newBuffer(0, webgpu.ShaderStage.COMPUTE, .{ .type = .read_only_storage, .has_dynamic_offset = false, .min_binding_size = 0 }),
             webgpu.BindGroupLayoutEntry.newBuffer(1, webgpu.ShaderStage.COMPUTE, .{ .type = .storage, .has_dynamic_offset = false, .min_binding_size = 0 }),
@@ -679,7 +690,7 @@ pub const Renderer = struct {
             .entries_len = prefix_sum_bgl_entries.len,
         });
 
-        // Particle Sort BGL (source_particles R, dest_particles W, bin_offset R, bin_current_size_atomic W)
+        // Now create the actual Particle Sort BGL (source_particles R, dest_particles W, bin_offset R, bin_current_size_atomic W)
         const particle_sort_bgl_entries = [_]webgpu.BindGroupLayoutEntry{
             webgpu.BindGroupLayoutEntry.newBuffer(0, webgpu.ShaderStage.COMPUTE, .{ .type = .read_only_storage, .has_dynamic_offset = false, .min_binding_size = 0 }),
             webgpu.BindGroupLayoutEntry.newBuffer(1, webgpu.ShaderStage.COMPUTE, .{ .type = .storage, .has_dynamic_offset = false, .min_binding_size = 0 }),
@@ -693,10 +704,15 @@ pub const Renderer = struct {
         });
 
         // Compose BGL (hdrTexture texture_2d, blueNoiseTexture texture_2d)
-        // FIXED: Ensure view_dimension is .@"2d" not .@"1d"
+        // DEBUG: Check if the issue is with enum value interpretation
+        const texture_binding_layout = webgpu.TextureBindingLayout{
+            .sample_type = .float,
+            .view_dimension = .@"2d", // This should be value 1
+            .multisampled = false,
+        };
         const compose_bgl_entries = [_]webgpu.BindGroupLayoutEntry{
-            webgpu.BindGroupLayoutEntry.newTexture(0, webgpu.ShaderStage.FRAGMENT, .{ .sample_type = .float, .view_dimension = .@"2d", .multisampled = false }),
-            webgpu.BindGroupLayoutEntry.newTexture(1, webgpu.ShaderStage.FRAGMENT, .{ .sample_type = .float, .view_dimension = .@"2d", .multisampled = false }),
+            webgpu.BindGroupLayoutEntry.newTexture(0, webgpu.ShaderStage.FRAGMENT, texture_binding_layout),
+            webgpu.BindGroupLayoutEntry.newTexture(1, webgpu.ShaderStage.FRAGMENT, texture_binding_layout),
         };
         self.compose_bgl = try webgpu.deviceCreateBindGroupLayout(device, &webgpu.BindGroupLayoutDescriptor{
             .label = "compose_bgl",
@@ -706,33 +722,39 @@ pub const Renderer = struct {
     }
 
     fn createBindGroups(self: *Renderer, device: webgpu.Device) !void {
-        // Particle Advance BGs (simple single buffer binding)
+        // FIXED: Particle Advance BGs - now with all 4 bindings matching particle_compute.wgsl
         self.particle_advance_bg_a = try webgpu.deviceCreateBindGroup(device, &webgpu.BindGroupDescriptor{
             .label = "particle_advance_bg_a",
             .layout = self.particle_advance_bgl,
             .entries = &[_]webgpu.BindGroupEntry{
-                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_a, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
+                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_a, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // particles storage
+                .{ .binding = 1, .resource = .{ .buffer = .{ .buffer = self.simulation_options_buffer, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // sim params uniform
+                .{ .binding = 2, .resource = .{ .buffer = .{ .buffer = self.bin_offset_buffer_a, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // bin_offsets R
+                .{ .binding = 3, .resource = .{ .buffer = .{ .buffer = self.forces_buffer, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // species_forces R
             },
-            .entries_len = 1,
+            .entries_len = 4,
         });
         self.particle_advance_bg_b = try webgpu.deviceCreateBindGroup(device, &webgpu.BindGroupDescriptor{
             .label = "particle_advance_bg_b",
             .layout = self.particle_advance_bgl,
             .entries = &[_]webgpu.BindGroupEntry{
-                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_b, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
+                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_b, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // particles storage
+                .{ .binding = 1, .resource = .{ .buffer = .{ .buffer = self.simulation_options_buffer, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // sim params uniform
+                .{ .binding = 2, .resource = .{ .buffer = .{ .buffer = self.bin_offset_buffer_b, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // bin_offsets R
+                .{ .binding = 3, .resource = .{ .buffer = .{ .buffer = self.forces_buffer, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // species_forces R
             },
-            .entries_len = 1,
+            .entries_len = 4,
         });
 
-        // FIXED: Particle Read-Only BGs - matches binning shader group 1
-        // @group(1) @binding(0) var<storage, read> particles_input: array<Particle>;
-        // @group(1) @binding(1) var<uniform> sim_params_fill: SimParams;
+        // FIXED: Particle Read-Only BGs - matches render shader group 1
+        // @group(1) @binding(0) var<storage, read> particles: array<Particle>;
+        // @group(1) @binding(1) var<storage, read> species_list: array<Species>;
         self.particle_read_only_bg_a = try webgpu.deviceCreateBindGroup(device, &webgpu.BindGroupDescriptor{
             .label = "particle_read_only_bg_a",
             .layout = self.particle_buffer_read_only_bgl,
             .entries = &[_]webgpu.BindGroupEntry{
-                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_a, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // particles_input
-                .{ .binding = 1, .resource = .{ .buffer = .{ .buffer = self.simulation_options_buffer, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // sim_params_fill
+                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_a, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // particles for render
+                .{ .binding = 1, .resource = .{ .buffer = .{ .buffer = self.species_buffer, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // species for render
             },
             .entries_len = 2,
         });
@@ -740,8 +762,8 @@ pub const Renderer = struct {
             .label = "particle_read_only_bg_b",
             .layout = self.particle_buffer_read_only_bgl,
             .entries = &[_]webgpu.BindGroupEntry{
-                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_b, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // particles_input
-                .{ .binding = 1, .resource = .{ .buffer = .{ .buffer = self.simulation_options_buffer, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // sim_params_fill
+                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_b, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // particles for render
+                .{ .binding = 1, .resource = .{ .buffer = .{ .buffer = self.species_buffer, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // species for render
             },
             .entries_len = 2,
         });
@@ -756,14 +778,15 @@ pub const Renderer = struct {
             .entries_len = 1,
         });
 
-        // Simulation Options BG
+        // FIXED: Simulation Options BG for binning (particles + sim_params)
         self.simulation_options_bg = try webgpu.deviceCreateBindGroup(device, &webgpu.BindGroupDescriptor{
-            .label = "simulation_options_bg",
+            .label = "binning_read_only_bg_a", // Used for binning group 1
             .layout = self.simulation_options_bgl,
             .entries = &[_]webgpu.BindGroupEntry{
-                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.simulation_options_buffer, .offset = 0, .size = webgpu.WHOLE_SIZE } } },
+                .{ .binding = 0, .resource = .{ .buffer = .{ .buffer = self.particle_buffer_a, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // particles for binning
+                .{ .binding = 1, .resource = .{ .buffer = .{ .buffer = self.simulation_options_buffer, .offset = 0, .size = webgpu.WHOLE_SIZE } } }, // sim_params uniform
             },
-            .entries_len = 1,
+            .entries_len = 2,
         });
 
         // FIXED: Bin Fill Size BGs - matches binning shader group 0
@@ -872,60 +895,63 @@ pub const Renderer = struct {
     }
 
     fn createPipelineLayouts(self: *Renderer, device: webgpu.Device) !void {
-        // Particle Advance PL: uses particle_advance_bgl, simulation_options_bgl
+        // Particle Advance PL: uses particle_advance_bgl ONLY (single group 0)
         self.particle_advance_pl = try webgpu.deviceCreatePipelineLayout(device, &webgpu.PipelineLayoutDescriptor{
             .label = "particle_advance_pl",
             .bind_group_layouts = &[_]webgpu.BindGroupLayout{
-                self.particle_advance_bgl,
-                self.simulation_options_bgl,
+                self.particle_advance_bgl, // Group 0: All 4 bindings in one group
             },
-            .bind_group_layouts_len = 2,
-        });
-
-        // Binning PL: uses particle_buffer_read_only_bgl, simulation_options_bgl, bin_fill_size_bgl
-        self.binning_pl = try webgpu.deviceCreatePipelineLayout(device, &webgpu.PipelineLayoutDescriptor{
-            .label = "binning_pl",
-            .bind_group_layouts = &[_]webgpu.BindGroupLayout{
-                self.particle_buffer_read_only_bgl, // Group 0
-                self.simulation_options_bgl, // Group 1
-                self.bin_fill_size_bgl, // Group 2
-            },
-            .bind_group_layouts_len = 3,
-        });
-
-        // Prefix Sum PL: uses bin_prefix_sum_bgl
-        self.prefix_sum_pl = try webgpu.deviceCreatePipelineLayout(device, &webgpu.PipelineLayoutDescriptor{
-            .label = "prefix_sum_pl",
-            .bind_group_layouts = &[_]webgpu.BindGroupLayout{self.bin_prefix_sum_bgl},
             .bind_group_layouts_len = 1,
         });
 
-        // Particle Sort PL: uses particle_sort_bgl, simulation_options_bgl
+        // Binning PL: uses bin_fill_size_bgl (group 0), simulation_options_bgl (group 1)
+        self.binning_pl = try webgpu.deviceCreatePipelineLayout(device, &webgpu.PipelineLayoutDescriptor{
+            .label = "binning_pl",
+            .bind_group_layouts = &[_]webgpu.BindGroupLayout{
+                self.bin_fill_size_bgl, // Group 0: bin_counts
+                self.simulation_options_bgl, // Group 1: particles + sim_params (for cs_fill_bin_counts)
+            },
+            .bind_group_layouts_len = 2,
+        });
+
+        // Prefix Sum PL: uses bin_prefix_sum_bgl (single group for now)
+        self.prefix_sum_pl = try webgpu.deviceCreatePipelineLayout(device, &webgpu.PipelineLayoutDescriptor{
+            .label = "prefix_sum_pl",
+            .bind_group_layouts = &[_]webgpu.BindGroupLayout{
+                self.bin_prefix_sum_bgl, // Group 0: source, dest, step_size
+            },
+            .bind_group_layouts_len = 1,
+        });
+
+        // Particle Sort PL: matches particle_sort.wgsl
+        // Group 0: particle_sort_bgl (4 bindings)
+        // TODO: Add Group 1 for sim_params uniform later
         self.particle_sort_pl = try webgpu.deviceCreatePipelineLayout(device, &webgpu.PipelineLayoutDescriptor{
             .label = "particle_sort_pl",
             .bind_group_layouts = &[_]webgpu.BindGroupLayout{
-                self.particle_sort_bgl, // Group 0
-                self.simulation_options_bgl, // Group 1
+                self.particle_sort_bgl, // Group 0: 4 bindings
             },
-            .bind_group_layouts_len = 2,
+            .bind_group_layouts_len = 1,
         });
 
-        // Particle Compute Forces PL: uses particle_compute_forces_bgl, simulation_options_bgl
+        // Particle Compute Forces PL: uses particle_compute_forces_bgl ONLY (single group 0)
         self.particle_compute_forces_pl = try webgpu.deviceCreatePipelineLayout(device, &webgpu.PipelineLayoutDescriptor{
             .label = "particle_compute_forces_pl",
             .bind_group_layouts = &[_]webgpu.BindGroupLayout{
-                self.particle_compute_forces_bgl, // Group 0
-                self.simulation_options_bgl, // Group 1
+                self.particle_compute_forces_bgl, // Group 0: All 4 bindings in one group
             },
-            .bind_group_layouts_len = 2,
+            .bind_group_layouts_len = 1,
         });
 
-        // Particle Render PL: uses particle_buffer_read_only_bgl, camera_bgl
+        // FIXED: Particle Render PL - matches render shader expectations
+        // @group(0) @binding(0) var<uniform> camera: Camera;
+        // @group(1) @binding(0) var<storage, read> particles: array<Particle>;
+        // @group(1) @binding(1) var<storage, read> species_list: array<Species>;
         self.particle_render_pl = try webgpu.deviceCreatePipelineLayout(device, &webgpu.PipelineLayoutDescriptor{
             .label = "particle_render_pl",
             .bind_group_layouts = &[_]webgpu.BindGroupLayout{
-                self.particle_buffer_read_only_bgl, // Group 0
-                self.camera_bgl, // Group 1
+                self.camera_bgl, // Group 0: Camera uniform
+                self.particle_buffer_read_only_bgl, // Group 1: Particles + Species
             },
             .bind_group_layouts_len = 2,
         });
@@ -1514,8 +1540,8 @@ pub const Renderer = struct {
             // Using particle_render_circle_pipeline as an example.
             // TODO: Add logic to select between glow, circle, point pipelines based on settings.
             webgpu.renderPassEncoderSetPipeline(pass_encoder, self.particle_render_circle_pipeline);
-            webgpu.renderPassEncoderSetBindGroup(pass_encoder, 0, particle_render_bg, &.{}); // Group 0: Particle Data + Species
-            webgpu.renderPassEncoderSetBindGroup(pass_encoder, 1, self.camera_bg, &.{}); // Group 1: Camera Uniforms
+            webgpu.renderPassEncoderSetBindGroup(pass_encoder, 0, self.camera_bg, &.{}); // Group 0: Camera Uniforms
+            webgpu.renderPassEncoderSetBindGroup(pass_encoder, 1, particle_render_bg, &.{}); // Group 1: Particle Data + Species
             webgpu.renderPassEncoderDraw(pass_encoder, 6, self.particle_count, 0, 0); // Draw 6 vertices (quad) per particle, instanced
 
             webgpu.renderPassEncoderEnd(pass_encoder);

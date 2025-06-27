@@ -1,167 +1,397 @@
-const input_handler = @import("input_handler.zig");
-const webgpu_handler = @import("webgpu_engine/webgpu_handler.zig");
-const webgpu_ffi = @import("zig-wasm-ffi").webgpu; // FFI library
-const renderer = @import("webgpu_engine/renderer.zig");
-const std = @import("std"); // Added for allocator
+const std = @import("std");
+const webgpu = @import("zig-wasm-ffi").webgpu;
+const webinput = @import("zig-wasm-ffi").webinput;
 const webutils = @import("zig-wasm-ffi").webutils;
+const webgpu_handler = @import("webgpu_engine/webgpu_handler.zig");
 
-// New function to log frame updates without std.fmt
-fn log_frame_update_info(count: u32, dt_ms: f32) void {
-    _ = count;
-    _ = dt_ms;
-    webutils.log("Frame update processed by main.zig.");
-    // For more complex formatting, would need to implement int/float to string for wasm32-freestanding
-    // For now, keeping it simple.
-}
+// Simple particle data - just position and color
+const Particle = extern struct {
+    x: f32,
+    y: f32,
+    r: f32,
+    g: f32,
+    b: f32,
+    a: f32,
+};
 
-var frame_count: u32 = 0;
-var g_renderer: ?*renderer.Renderer = null;
-var g_main_allocator: ?std.mem.Allocator = null;
-// Keep gpa_instance global to deinit it properly
-var g_gpa_instance: std.heap.GeneralPurposeAllocator(.{}) = undefined;
-var renderer_initialized: bool = false;
-var renderer_init_failed: bool = false;
+// Simple renderer that just draws particles as points
+var simple_renderer: ?SimpleRenderer = null;
+var allocator: std.mem.Allocator = undefined;
 
-pub export fn _start() void {
-    webutils.log("Zig _start called from main.zig.");
+const SimpleRenderer = struct {
+    device: webgpu.Device,
+    queue: webgpu.Queue,
 
-    // Initialize a global allocator for main.zig scope
-    g_gpa_instance = std.heap.GeneralPurposeAllocator(.{}){};
-    g_main_allocator = g_gpa_instance.allocator();
+    // Buffers
+    particle_buffer: webgpu.Buffer,
+    camera_buffer: webgpu.Buffer,
 
-    // Initialize WebGPU through the handler (now using global handler instance)
-    webgpu_handler.initGlobalHandler();
-    // Error state is checked via isGlobalHandlerInitialized() / hasGlobalHandlerFailed() in update_frame.
+    // Bind groups and layouts
+    camera_bind_group_layout: webgpu.BindGroupLayout,
+    camera_bind_group: webgpu.BindGroup,
 
-    webutils.log("WebGPU Handler initGlobalHandler() call made. Check console for async callback status.");
+    // Pipelines
+    render_pipeline: webgpu.RenderPipeline,
 
-    // Debug printing for struct sizes and offsets
-    webutils.log("--- WebGPU Struct Sizes (main.zig) ---");
+    // Particles data
+    particles: []Particle,
+    frame_count: u32,
 
-    // Simple way to print numbers by checking ranges
-    const bindgroup_entry_size = @sizeOf(webgpu_ffi.BindGroupEntry);
-    if (bindgroup_entry_size == 24) webutils.log("BindGroupEntry size: 24 bytes");
-    if (bindgroup_entry_size == 28) webutils.log("BindGroupEntry size: 28 bytes");
-    if (bindgroup_entry_size == 32) webutils.log("BindGroupEntry size: 32 bytes");
-    if (bindgroup_entry_size == 44) webutils.log("BindGroupEntry size: 44 bytes");
-    if (bindgroup_entry_size == 48) webutils.log("BindGroupEntry size: 48 bytes");
-    if (bindgroup_entry_size > 48) webutils.log("BindGroupEntry size: > 48 bytes");
+    const particle_count = 1000;
 
-    const buffer_binding_size = @sizeOf(webgpu_ffi.BufferBinding);
-    if (buffer_binding_size == 20) webutils.log("BufferBinding size: 20 bytes");
-    if (buffer_binding_size == 24) webutils.log("BufferBinding size: 24 bytes");
-    if (buffer_binding_size == 32) webutils.log("BufferBinding size: 32 bytes");
+    pub fn init(device: webgpu.Device, queue: webgpu.Queue, surface_format: webgpu.TextureFormat) !SimpleRenderer {
+        var self = SimpleRenderer{
+            .device = device,
+            .queue = queue,
+            .particle_buffer = undefined,
+            .camera_buffer = undefined,
+            .camera_bind_group_layout = undefined,
+            .camera_bind_group = undefined,
+            .render_pipeline = undefined,
+            .particles = undefined,
+            .frame_count = 0,
+        };
 
-    const resource_union_size = @sizeOf(webgpu_ffi.BindGroupEntry.Resource);
-    if (resource_union_size == 20) webutils.log("Resource union size: 20 bytes");
-    if (resource_union_size == 24) webutils.log("Resource union size: 24 bytes");
-    if (resource_union_size == 32) webutils.log("Resource union size: 32 bytes");
+        // Initialize particles
+        self.particles = try allocator.alloc(Particle, particle_count);
 
-    webutils.log("--- End WebGPU Struct Sizes ---");
-    // For now, I've replaced the dynamic offset logging with placeholders ("TODO_log_offset")
-    // because implementing a robust int-to-string without std for wasm32-freestanding
-    // is a bit involved for this quick fix. The key is removing `std.debug.print`.
-    // If these specific offset logs are critical, a simple int-to-string can be added later.
+        // Create particles in a nice pattern
+        for (self.particles, 0..) |*particle, i| {
+            const fi = @as(f32, @floatFromInt(i));
+            const angle = fi * 0.1;
+            const radius = 0.3 + 0.2 * @sin(fi * 0.05);
 
-    // The original message assumed success or pending. We should rely on isGlobalHandlerInitialized() in update_frame.
-    webutils.log("Initial setup in _start complete. WebGPU initialization is asynchronous.");
-}
+            particle.x = radius * @cos(angle);
+            particle.y = radius * @sin(angle);
+            particle.r = 0.5 + 0.5 * @sin(fi * 0.02);
+            particle.g = 0.5 + 0.5 * @cos(fi * 0.03);
+            particle.b = 0.5 + 0.5 * @sin(fi * 0.04);
+            particle.a = 1.0;
+        }
 
-// This function is called repeatedly from JavaScript (e.g., via requestAnimationFrame)
-export fn update_frame(delta_time_ms: f32) void {
-    if (renderer_init_failed) {
-        return;
+        // Create buffers
+        try self.createBuffers();
+
+        // Create bind group layouts
+        try self.createBindGroupLayouts();
+
+        // Create bind groups
+        try self.createBindGroups();
+
+        // Create pipeline
+        try self.createRenderPipeline(surface_format);
+
+        return self;
     }
 
+    fn createBuffers(self: *SimpleRenderer) !void {
+        // Particle buffer
+        self.particle_buffer = try webgpu.deviceCreateBuffer(self.device, &webgpu.BufferDescriptor{
+            .label = "particle_buffer",
+            .size = @sizeOf(Particle) * particle_count,
+            .usage = webgpu.GPUBufferUsage.VERTEX | webgpu.GPUBufferUsage.COPY_DST,
+            .mappedAtCreation = false,
+        });
+
+        // Camera buffer (just a simple projection matrix)
+        self.camera_buffer = try webgpu.deviceCreateBuffer(self.device, &webgpu.BufferDescriptor{
+            .label = "camera_buffer",
+            .size = 16 * @sizeOf(f32), // 4x4 matrix
+            .usage = webgpu.GPUBufferUsage.UNIFORM | webgpu.GPUBufferUsage.COPY_DST,
+            .mappedAtCreation = false,
+        });
+
+        // Write initial data
+        webgpu.queueWriteBuffer(self.queue, self.particle_buffer, 0, @sizeOf(Particle) * particle_count, @ptrCast(self.particles.ptr));
+
+        // Simple identity matrix for camera
+        const identity = [_]f32{
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        };
+        webgpu.queueWriteBuffer(self.queue, self.camera_buffer, 0, @sizeOf(@TypeOf(identity)), @ptrCast(&identity));
+    }
+
+    fn createBindGroupLayouts(self: *SimpleRenderer) !void {
+        // Simple layouts that should work with the current FFI
+        const camera_entries = [_]webgpu.BindGroupLayoutEntry{
+            webgpu.BindGroupLayoutEntry.newBuffer(0, webgpu.ShaderStage.VERTEX, .{
+                .type = .uniform,
+                .has_dynamic_offset = false,
+                .min_binding_size = 0,
+            }),
+        };
+
+        self.camera_bind_group_layout = try webgpu.deviceCreateBindGroupLayout(self.device, &webgpu.BindGroupLayoutDescriptor{
+            .label = "camera_bgl",
+            .entries = &camera_entries,
+            .entries_len = camera_entries.len,
+        });
+    }
+
+    fn createBindGroups(self: *SimpleRenderer) !void {
+        self.camera_bind_group = try webgpu.deviceCreateBindGroup(self.device, &webgpu.BindGroupDescriptor{
+            .label = "camera_bg",
+            .layout = self.camera_bind_group_layout,
+            .entries = &[_]webgpu.BindGroupEntry{
+                .{
+                    .binding = 0,
+                    .resource = .{ .buffer = .{
+                        .buffer = self.camera_buffer,
+                        .offset = 0,
+                        .size = webgpu.WHOLE_SIZE,
+                    } },
+                },
+            },
+            .entries_len = 1,
+        });
+    }
+
+    fn createRenderPipeline(self: *SimpleRenderer, surface_format: webgpu.TextureFormat) !void {
+        const vertex_shader_source =
+            \\struct VertexInput {
+            \\    @location(0) position: vec2<f32>,
+            \\    @location(1) color: vec4<f32>,
+            \\}
+            \\
+            \\struct VertexOutput {
+            \\    @builtin(position) clip_position: vec4<f32>,
+            \\    @location(0) color: vec4<f32>,
+            \\}
+            \\
+            \\@group(0) @binding(0) var<uniform> transform: mat4x4<f32>;
+            \\
+            \\@vertex
+            \\fn vs_main(vertex: VertexInput) -> VertexOutput {
+            \\    var out: VertexOutput;
+            \\    out.clip_position = transform * vec4<f32>(vertex.position, 0.0, 1.0);
+            \\    out.color = vertex.color;
+            \\    return out;
+            \\}
+        ;
+
+        const fragment_shader_source =
+            \\struct VertexOutput {
+            \\    @builtin(position) clip_position: vec4<f32>,
+            \\    @location(0) color: vec4<f32>,
+            \\}
+            \\
+            \\@fragment
+            \\fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+            \\    return in.color;
+            \\}
+        ;
+
+        const vertex_shader = try webgpu.deviceCreateShaderModule(self.device, &webgpu.ShaderModuleDescriptor{
+            .label = "vertex_shader",
+            .wgsl_code = .{
+                .code_ptr = vertex_shader_source.ptr,
+                .code_len = vertex_shader_source.len,
+            },
+        });
+
+        const fragment_shader = try webgpu.deviceCreateShaderModule(self.device, &webgpu.ShaderModuleDescriptor{
+            .label = "fragment_shader",
+            .wgsl_code = .{
+                .code_ptr = fragment_shader_source.ptr,
+                .code_len = fragment_shader_source.len,
+            },
+        });
+
+        const pipeline_layout = try webgpu.deviceCreatePipelineLayout(self.device, &webgpu.PipelineLayoutDescriptor{
+            .label = "render_pipeline_layout",
+            .bind_group_layouts = &[_]webgpu.BindGroupLayout{self.camera_bind_group_layout},
+            .bind_group_layouts_len = 1,
+        });
+
+        const vertex_attributes = [_]webgpu.VertexAttribute{
+            .{ .offset = 0, .shader_location = 0, .format = .float32x2 }, // position
+            .{ .offset = 8, .shader_location = 1, .format = .float32x4 }, // color
+        };
+
+        const vertex_buffer_layout = webgpu.VertexBufferLayout{
+            .array_stride = @sizeOf(Particle),
+            .step_mode = .vertex,
+            .attributes = &vertex_attributes,
+            .attributes_len = vertex_attributes.len,
+        };
+
+        self.render_pipeline = try webgpu.deviceCreateRenderPipeline(self.device, &webgpu.RenderPipelineDescriptor{
+            .label = "render_pipeline",
+            .layout = pipeline_layout,
+            .vertex = .{
+                .module = vertex_shader,
+                .entry_point = "vs_main",
+                .buffers = &[_]webgpu.VertexBufferLayout{vertex_buffer_layout},
+                .buffers_len = 1,
+            },
+            .primitive = .{
+                .topology = .point_list,
+                .strip_index_format = .uint16,
+                .strip_index_format_is_present = false,
+                .front_face = .ccw,
+                .cull_mode = .none,
+            },
+            .depth_stencil = null,
+            .multisample = .{
+                .count = 1,
+                .mask = 0xFFFFFFFF,
+                .alpha_to_coverage_enabled = false,
+            },
+            .fragment = &webgpu.FragmentState{
+                .module = fragment_shader,
+                .entry_point = "fs_main",
+                .targets = &[_]webgpu.ColorTargetState{
+                    .{
+                        .format = surface_format,
+                        .blend = &webgpu.BlendState{
+                            .color = .{
+                                .operation = .add,
+                                .src_factor = .src_alpha,
+                                .dst_factor = .one_minus_src_alpha,
+                            },
+                            .alpha = .{
+                                .operation = .add,
+                                .src_factor = .one,
+                                .dst_factor = .zero,
+                            },
+                        },
+                        .write_mask = webgpu.ColorWriteMask.ALL,
+                    },
+                },
+                .targets_len = 1,
+            },
+        });
+    }
+
+    pub fn render(self: *SimpleRenderer, surface_view: webgpu.TextureView) !void {
+        // Update particles (simple animation)
+        for (self.particles, 0..) |*particle, i| {
+            const fi = @as(f32, @floatFromInt(i));
+            // Simple frame-based animation instead of time-based
+            self.frame_count += 1;
+            const time = @as(f32, @floatFromInt(self.frame_count)) * 0.01;
+            const angle = fi * 0.1 + time * 0.5;
+            const radius = 0.3 + 0.2 * @sin(fi * 0.05 + time);
+
+            particle.x = radius * @cos(angle);
+            particle.y = radius * @sin(angle);
+        }
+
+        // Update particle buffer
+        webgpu.queueWriteBuffer(self.queue, self.particle_buffer, 0, @sizeOf(Particle) * particle_count, @ptrCast(self.particles.ptr));
+
+        const command_encoder = try webgpu.deviceCreateCommandEncoder(self.device, &webgpu.CommandEncoderDescriptor{
+            .label = "render_encoder",
+        });
+
+        const clear_color = webgpu.Color{ .r = 0.1, .g = 0.1, .b = 0.2, .a = 1.0 };
+
+        const render_pass = try webgpu.commandEncoderBeginRenderPass(command_encoder, &webgpu.RenderPassDescriptor{
+            .label = "render_pass",
+            .color_attachments = &[_]webgpu.RenderPassColorAttachment{
+                .{
+                    .view = surface_view,
+                    .resolve_target = 0,
+                    .resolve_target_is_present = false,
+                    .load_op = .clear,
+                    .store_op = .store,
+                    .clear_value = &clear_color,
+                },
+            },
+            .color_attachments_len = 1,
+            .depth_stencil_attachment = null,
+            .occlusion_query_set = 0,
+            .occlusion_query_set_is_present = false,
+        });
+
+        webgpu.renderPassEncoderSetPipeline(render_pass, self.render_pipeline);
+        webgpu.renderPassEncoderSetBindGroup(render_pass, 0, self.camera_bind_group, null);
+        webgpu.renderPassEncoderSetVertexBuffer(render_pass, 0, self.particle_buffer, 0, webgpu.WHOLE_SIZE);
+        webgpu.renderPassEncoderDraw(render_pass, particle_count, 1, 0, 0);
+
+        webgpu.renderPassEncoderEnd(render_pass);
+
+        const command_buffer = try webgpu.commandEncoderFinish(command_encoder, &webgpu.CommandBufferDescriptor{
+            .label = "render_commands",
+        });
+
+        webgpu.queueSubmit(self.queue, &[_]webgpu.CommandBuffer{command_buffer});
+    }
+
+    pub fn deinit(self: *SimpleRenderer) void {
+        if (self.particles.len > 0) {
+            allocator.free(self.particles);
+        }
+    }
+};
+
+var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+
+export fn _start() void {
+    allocator = gpa.allocator();
+    webutils.log("Starting simple particle demo...");
+
+    // Initialize WebGPU through the handler
+    webgpu_handler.initGlobalHandler();
+    webutils.log("WebGPU initialization started (async)...");
+}
+
+export fn updateFrame() void {
+    // Check if WebGPU is ready
     if (!webgpu_handler.isGlobalHandlerInitialized()) {
         if (webgpu_handler.hasGlobalHandlerFailed()) {
-            webutils.log("WebGPU initialization failed, cannot initialize renderer or update frame.");
-            renderer_init_failed = true; // Prevent further attempts if WebGPU itself failed
-        } else {
-            // log("WebGPU not yet initialized, waiting...");
+            webutils.log("WebGPU initialization failed, cannot proceed.");
         }
         return; // Wait for WebGPU to be ready
     }
 
-    // WebGPU is initialized, proceed to initialize renderer if not already done
-    if (!renderer_initialized) {
-        webutils.log("WebGPU initialized. Now initializing Renderer...");
-        if (g_main_allocator) |allocator| {
-            // Pass pointer to the global handler instance
-            g_renderer = renderer.Renderer.init(allocator, &webgpu_handler.g_wgpu_handler_instance) catch |err| {
-                webutils.log("Failed to initialize Renderer: ");
-                webutils.log(@errorName(err));
-                renderer_init_failed = true;
-                // Allocator deinit is handled in _wasm_shutdown
-                webutils.log("Renderer init failed. Allocator will be deinitialized at shutdown.");
-                return;
-            };
-            renderer_initialized = true;
-            webutils.log("Renderer initialized successfully.");
-        } else {
-            webutils.log("Main allocator not available for Renderer initialization.");
-            renderer_init_failed = true;
+    if (simple_renderer == null) {
+        const device = webgpu_handler.g_wgpu_handler_instance.device;
+        const queue = webgpu_handler.g_wgpu_handler_instance.queue;
+
+        if (device == 0 or queue == 0) {
+            webutils.log("Device or queue not available");
             return;
         }
-    }
 
-    frame_count += 1;
-    log_frame_update_info(frame_count, delta_time_ms);
+        // Get surface format
+        const surface_format = webgpu_handler.g_wgpu_handler_instance.getPreferredCanvasFormat() orelse .bgra8unorm;
 
-    input_handler.update();
-
-    if (input_handler.was_left_mouse_button_just_pressed()) {
-        webutils.log("Left mouse button was pressed (detected in main.zig).");
-    }
-
-    if (input_handler.was_right_mouse_button_just_pressed()) {
-        webutils.log("Right mouse button was pressed (detected in main.zig).");
-    }
-
-    if (input_handler.was_space_just_pressed()) {
-        webutils.log("Spacebar was just pressed (detected in main.zig)!");
-    }
-
-    // Call renderer's renderFrame
-    if (g_renderer) |r| {
-        r.renderFrame() catch |err| {
-            webutils.log("Error during renderer.renderFrame: ");
+        simple_renderer = SimpleRenderer.init(device, queue, surface_format) catch |err| {
+            webutils.log("Failed to initialize renderer: ");
             webutils.log(@errorName(err));
-            // Depending on the error, might need to stop rendering or attempt recovery.
+            return;
         };
-    } else if (renderer_initialized and !renderer_init_failed) {
-        // This case should ideally not be hit if init logic is correct.
-        webutils.log("Renderer was marked initialized, but g_renderer is null. RenderFrame skipped.");
+
+        webutils.log("Simple renderer initialized successfully!");
+        return;
     }
+
+    // Get surface view and render
+    const surface_view = webgpu.getCurrentTextureView() catch |err| {
+        webutils.log("Failed to get surface view: ");
+        webutils.log(@errorName(err));
+        return;
+    };
+
+    simple_renderer.?.render(surface_view) catch |err| {
+        webutils.log("Render error: ");
+        webutils.log(@errorName(err));
+    };
 }
 
-// Ensure that if the Wasm module has a way to be explicitly torn down by JS,
-// an exported function could call webgpu_handler.deinit().
-// For now, `_start` sets up and `update_frame` runs. Deinit in `_start` might be too early
-// if `_start` is just an init and not the main loop itself.
-// If JS calls _start once and then update_frame in a loop, then deinit should be handled
-// by a separate exported shutdown function or managed by JS when the page unloads.
-// The original defer in _start in the previous main.zig version would deinit immediately after _start finishes.
-// We want WebGPU to stay alive for update_frame. So, deinit must be handled differently.
-
-pub export fn _wasm_shutdown() void {
+export fn shutdown() void {
     webutils.log("Wasm shutdown requested.");
 
-    if (g_renderer) |r| {
+    if (simple_renderer) |*r| {
         webutils.log("Deinitializing Renderer...");
         r.deinit();
-        g_renderer = null;
+        simple_renderer = null;
         webutils.log("Renderer deinitialized.");
     }
 
-    // Deinitialize the main allocator if it was initialized
-    if (g_main_allocator != null) {
-        webutils.log("Deinitializing main allocator (GPA)...");
-        _ = g_gpa_instance.deinit(); // Deinit the GPA instance itself
-        g_main_allocator = null;
-        webutils.log("Main allocator deinitialized.");
-    }
-
     webgpu_handler.deinitGlobalHandler();
-    webutils.log("WebGPU handler deinitialized during Wasm shutdown.");
 }
