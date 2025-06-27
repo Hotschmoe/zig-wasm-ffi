@@ -956,13 +956,15 @@ export const webGPUNativeImports = {
                 }
             }
 
-            // primitive: PrimitiveState (topology, strip_index_format, front_face, cull_mode)
+            // primitive: PrimitiveState (topology, strip_index_format, strip_index_format_is_present, front_face, cull_mode)
             jsDescriptor.primitive = {};
             jsDescriptor.primitive.topology = ZIG_PRIMITIVE_TOPOLOGY_TO_JS[wasmMemoryU32[descriptor_offset_u32++]];
-            const strip_index_format_val = wasmMemoryU32[descriptor_offset_u32++]; // This is ?GPUIndexFormat
-            if (strip_index_format_val !== 0xFFFFFFFF) { // Assuming Zig sends a sentinel for null, e.g., u32.max
+            const strip_index_format_val = wasmMemoryU32[descriptor_offset_u32++]; // GPUIndexFormat
+            const strip_index_format_is_present = wasmMemoryU32[descriptor_offset_u32++] !== 0; // bool
+            if (strip_index_format_is_present) {
                 jsDescriptor.primitive.stripIndexFormat = ZIG_INDEX_FORMAT_TO_JS[strip_index_format_val];
             }
+            // Note: stripIndexFormat is omitted when not present, which is what WebGPU expects
             jsDescriptor.primitive.frontFace = ZIG_FRONT_FACE_TO_JS[wasmMemoryU32[descriptor_offset_u32++]];
             jsDescriptor.primitive.cullMode = ZIG_CULL_MODE_TO_JS[wasmMemoryU32[descriptor_offset_u32++]];
             // unclippedDepth is skipped for now
@@ -1417,17 +1419,46 @@ export const webGPUNativeImports = {
     },
 
     env_wgpu_render_pass_encoder_set_vertex_buffer_js: function(pass_handle, slot, buffer_handle, offset_low, offset_high, size_low, size_high) {
+        console.log(`[webgpu.js] DEBUG SetVertexBuffer ENTRY: args.length=${arguments.length}`);
+        console.log(`[webgpu.js] DEBUG SetVertexBuffer RAW: pass=${pass_handle}, slot=${slot}, buffer=${buffer_handle}`);
+        console.log(`[webgpu.js] DEBUG SetVertexBuffer RAW: offset_low=${offset_low}, offset_high=${offset_high}, size_low=${size_low}, size_high=${size_high}`);
+        console.log(`[webgpu.js] DEBUG SetVertexBuffer TYPES: offset_low type=${typeof offset_low}, offset_high type=${typeof offset_high}`);
+        console.log(`[webgpu.js] DEBUG SetVertexBuffer TYPES: size_low type=${typeof size_low}, size_high type=${typeof size_high}`);
+        
         try {
             const pass = globalWebGPU.renderPassEncoders[pass_handle];
             if (!pass) return recordError(`RenderPassEncoder not found: ${pass_handle}`);
             const buffer = buffer_handle ? globalWebGPU.buffers[buffer_handle] : null;
             if (buffer_handle && !buffer) return recordError(`VertexBuffer not found: ${buffer_handle}`);
             
-            const offset = combineToBigInt(offset_low, offset_high);
-            const size = combineToBigInt(size_low, size_high);
+            // Debug logging for parameter values
+            console.log(`[webgpu.js] DEBUG SetVertexBuffer: offset_low=${offset_low}, offset_high=${offset_high}, size_low=${size_low}, size_high=${size_high}`);
+            
+            const offset = combineToBigInt(offset_low || 0, offset_high || 0);
+            
+            // Handle WHOLE_SIZE (0xffffffffffffffff) and undefined size parameters
+            let size;
+            if (size_low === undefined || size_high === undefined) {
+                // If size parameters are undefined, use undefined for WebGPU (whole buffer)
+                size = undefined;
+            } else {
+                const sizeValue = combineToBigInt(size_low, size_high);
+                // Check if this is WHOLE_SIZE (0xffffffffffffffff)
+                if (sizeValue === 0xffffffffffffffffn) {
+                    size = undefined; // WebGPU undefined means whole buffer
+                } else {
+                    size = Number(sizeValue);
+                }
+            }
+            
+            console.log(`[webgpu.js] DEBUG SetVertexBuffer: calculated offset=${offset} (as Number: ${Number(offset)}), size=${size}`);
 
             if (buffer) {
-                pass.setVertexBuffer(slot, buffer, Number(offset), Number(size)); // Pass size always
+                if (size !== undefined) {
+                    pass.setVertexBuffer(slot, buffer, Number(offset), size);
+                } else {
+                    pass.setVertexBuffer(slot, buffer, Number(offset)); // Omit size for whole buffer
+                }
             } else {
                 pass.setVertexBuffer(slot, null); // Unsetting buffer
             }
