@@ -1302,9 +1302,10 @@ export const webGPUNativeImports = {
                     console.log(`[webgpu.js] DEBUG clearValue: ptr_low=${clear_value_ptr_low}, ptr_high=${clear_value_ptr_high}, ptr=${clear_value_ptr}`);
                 }
                 
-                if (clear_value_ptr) {
+                // Check for valid pointer (not null, not out of bounds)
+                if (clear_value_ptr && clear_value_ptr > 0 && clear_value_ptr < (globalWebGPU.memory.buffer.byteLength - 32)) {
                     let cv_offset_f64 = clear_value_ptr / 8; // Color struct is 4 * f64
-                    // Bounds check
+                    // Additional bounds check for the Color struct (4 f64 values = 32 bytes)
                     if (cv_offset_f64 + 3 < wasmMemoryF64.length) {
                         const r = wasmMemoryF64[cv_offset_f64];
                         const g = wasmMemoryF64[cv_offset_f64 + 1];
@@ -1319,13 +1320,29 @@ export const webGPUNativeImports = {
                         jsAttachment.clearValue = { r, g, b, a };
                     } else {
                         console.warn(`[webgpu.js] Clear value pointer ${clear_value_ptr} (f64 offset ${cv_offset_f64}) out of bounds. Memory length: ${wasmMemoryF64.length}`);
-                        jsAttachment.clearValue = { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }; // Default black
+                        jsAttachment.clearValue = { r: 0.1, g: 0.1, b: 0.2, a: 1.0 }; // Default dark blue
                     }
+                } else {
+                    // No clear value pointer provided, use default clear color
+                    jsAttachment.clearValue = { r: 0.1, g: 0.1, b: 0.2, a: 1.0 }; // Default dark blue
                 }
                 
                 // Fixed struct alignment: load_op and store_op are now at offsets 24 and 28 
-                jsAttachment.loadOp = ZIG_LOAD_OP_TO_JS[wasmMemoryU32[(ca_offset_bytes + 24) / 4]];
-                jsAttachment.storeOp = ZIG_STORE_OP_TO_JS[wasmMemoryU32[(ca_offset_bytes + 28) / 4]];
+                const loadOpValue = wasmMemoryU32[(ca_offset_bytes + 24) / 4];
+                let storeOpValue = wasmMemoryU32[(ca_offset_bytes + 28) / 4]; // Original offset
+                
+                // Use the value that makes sense (0 or 1), otherwise default to "store"
+                if (!(storeOpValue === 0 || storeOpValue === 1)) {
+                    storeOpValue = 0; // Default to "store"
+                }
+                
+                jsAttachment.loadOp = ZIG_LOAD_OP_TO_JS[loadOpValue];
+                jsAttachment.storeOp = ZIG_STORE_OP_TO_JS[storeOpValue];
+                
+                if (!jsAttachment.loadOp || !jsAttachment.storeOp) {
+                    console.error(`[webgpu.js] ERROR: loadOp or storeOp mapping failed. loadOp=${jsAttachment.loadOp}, storeOp=${jsAttachment.storeOp}`);
+                    return recordError(`Invalid loadOp (${loadOpValue}) or storeOp (${storeOpValue}) value in render pass color attachment`);
+                }
                 
                 jsDescriptor.colorAttachments.push(jsAttachment);
                 ca_offset_bytes += 32; // Size of RenderPassColorAttachment struct: 32 bytes

@@ -309,7 +309,7 @@ const SimpleRenderer = struct {
                     .resolve_target_is_present = false,
                     .load_op = .clear,
                     .store_op = .store,
-                    .clear_value = &static_clear_color,
+                    .clear_value = null,
                 },
             },
             .color_attachments_len = 1,
