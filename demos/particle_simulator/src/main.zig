@@ -3,6 +3,7 @@ const webgpu = @import("zig-wasm-ffi").webgpu;
 const webinput = @import("zig-wasm-ffi").webinput;
 const webutils = @import("zig-wasm-ffi").webutils;
 const webgpu_handler = @import("webgpu_engine/webgpu_handler.zig");
+const input_handler = @import("input_handler.zig");
 
 // Simple particle data - just position and color
 const Particle = extern struct {
@@ -40,6 +41,8 @@ const SimpleRenderer = struct {
     const particle_count = 1000;
 
     pub fn init(device: webgpu.Device, queue: webgpu.Queue, surface_format: webgpu.TextureFormat) !SimpleRenderer {
+        webutils.log("SimpleRenderer.init() called");
+
         var self = SimpleRenderer{
             .device = device,
             .queue = queue,
@@ -52,9 +55,11 @@ const SimpleRenderer = struct {
             .frame_count = 0,
         };
 
+        webutils.log("Allocating particles...");
         // Initialize particles
         self.particles = try allocator.alloc(Particle, particle_count);
 
+        webutils.log("Setting up initial particle data...");
         // Create particles in a nice pattern
         for (self.particles, 0..) |*particle, i| {
             const fi = @as(f32, @floatFromInt(i));
@@ -69,18 +74,23 @@ const SimpleRenderer = struct {
             particle.a = 1.0;
         }
 
+        webutils.log("Creating buffers...");
         // Create buffers
         try self.createBuffers();
 
+        webutils.log("Creating bind group layouts...");
         // Create bind group layouts
         try self.createBindGroupLayouts();
 
+        webutils.log("Creating bind groups...");
         // Create bind groups
         try self.createBindGroups();
 
+        webutils.log("Creating render pipeline...");
         // Create pipeline
         try self.createRenderPipeline(surface_format);
 
+        webutils.log("SimpleRenderer.init() completed successfully");
         return self;
     }
 
@@ -339,7 +349,10 @@ export fn _start() void {
     webutils.log("WebGPU initialization started (async)...");
 }
 
-export fn updateFrame() void {
+export fn update_frame() void {
+    // Update input handling first
+    input_handler.update();
+
     // Check if WebGPU is ready
     if (!webgpu_handler.isGlobalHandlerInitialized()) {
         if (webgpu_handler.hasGlobalHandlerFailed()) {
@@ -349,16 +362,20 @@ export fn updateFrame() void {
     }
 
     if (simple_renderer == null) {
+        webutils.log("Attempting to initialize renderer...");
         const device = webgpu_handler.g_wgpu_handler_instance.device;
         const queue = webgpu_handler.g_wgpu_handler_instance.queue;
 
+        webutils.log("Checking device and queue handles...");
         if (device == 0 or queue == 0) {
             webutils.log("Device or queue not available");
             return;
         }
+        webutils.log("Device and queue handles are valid, proceeding...");
 
         // Get surface format
         const surface_format = webgpu_handler.g_wgpu_handler_instance.getPreferredCanvasFormat() orelse .bgra8unorm;
+        webutils.log("Got surface format, initializing renderer...");
 
         simple_renderer = SimpleRenderer.init(device, queue, surface_format) catch |err| {
             webutils.log("Failed to initialize renderer: ");
@@ -370,6 +387,9 @@ export fn updateFrame() void {
         return;
     }
 
+    // Add debug for render calls
+    webutils.log("Renderer exists, attempting to render frame...");
+
     // Get surface view and render
     const surface_view = webgpu.getCurrentTextureView() catch |err| {
         webutils.log("Failed to get surface view: ");
@@ -377,10 +397,12 @@ export fn updateFrame() void {
         return;
     };
 
+    webutils.log("Got surface view, calling render...");
     simple_renderer.?.render(surface_view) catch |err| {
         webutils.log("Render error: ");
         webutils.log(@errorName(err));
     };
+    webutils.log("Render call completed.");
 }
 
 export fn shutdown() void {
