@@ -1,0 +1,4 @@
+{
+  "database": "cstack.db",
+  "jsonl_export": "issues.jsonl"
+}
