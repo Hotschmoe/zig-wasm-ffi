@@ -1,9 +1,5 @@
-// zig-wasm-ffi/js/webgpu.js
-
 let wasmInstance = null;
 
-// --- Handle Registry ---
-// Zig references WebGPU objects by integer handle IDs.
 const handles = {
     nextId: 1,
     map: new Map(),
@@ -23,7 +19,6 @@ const handles = {
     },
 };
 
-// --- WebGPU State ---
 let device = null;
 let adapter = null;
 let context = null;
@@ -31,19 +26,6 @@ let preferredFormat = null;
 let commandEncoder = null;
 let renderPassEncoder = null;
 
-// --- Setup Function ---
-
-/**
- * Initializes the WebGPU subsystem: requests adapter/device, configures the
- * canvas context, and stores the device as handle ID 1.
- *
- * After setup completes it calls the WASM export `setDevice(1)` so the Zig
- * side knows which handle to use for the GPU device.
- *
- * @param {object} instance  The instantiated WASM module instance (with .exports).
- * @param {HTMLCanvasElement} canvasElement  The canvas to render into.
- * @returns {Promise<void>}
- */
 export async function setupWebGPU(instance, canvasElement) {
     if (!instance || !instance.exports) {
         console.error("[webgpu.js] WASM instance or exports not provided to setupWebGPU.");
@@ -80,16 +62,6 @@ export async function setupWebGPU(instance, canvasElement) {
     console.log("[webgpu.js] WebGPU initialized. Format:", preferredFormat);
 }
 
-// --- Blue Noise Texture Loader ---
-
-/**
- * Loads an image from `imageUrl`, uploads it as an rgba8unorm WebGPU texture,
- * and passes the texture + view handles to the WASM export `setBlueNoiseTexture`.
- *
- * @param {object} instance  The WASM instance (with .exports).
- * @param {string} imageUrl  URL of the blue-noise PNG.
- * @returns {Promise<void>}
- */
 export async function loadBlueNoiseTexture(instance, imageUrl) {
     if (!device) {
         console.error("[webgpu.js] loadBlueNoiseTexture called before setupWebGPU.");
@@ -118,13 +90,10 @@ export async function loadBlueNoiseTexture(instance, imageUrl) {
 
     console.log("[webgpu.js] Blue noise texture loaded:", bitmap.width, "x", bitmap.height);
 
-    const wasm = instance || wasmInstance;
-    if (wasm && wasm.exports && wasm.exports.setBlueNoiseTexture) {
-        wasm.exports.setBlueNoiseTexture(textureHandle, viewHandle);
+    if (instance?.exports?.setBlueNoiseTexture) {
+        instance.exports.setBlueNoiseTexture(textureHandle, viewHandle);
     }
 }
-
-// --- Helper: read WASM memory ---
 
 function mem() {
     return wasmInstance.exports.memory;
@@ -133,8 +102,6 @@ function mem() {
 function decodeString(ptr, len) {
     return new TextDecoder().decode(new Uint8Array(mem().buffer, ptr, len));
 }
-
-// --- Texture format enum mapping ---
 
 const TEXTURE_FORMATS = [
     "rgba16float",     // 0
@@ -145,10 +112,6 @@ const TEXTURE_FORMATS = [
     "depth24plus",     // 5
     "depth32float",    // 6
 ];
-
-// --- env_* FFI Functions (imported by WASM as "env") ---
-
-// === Buffer Management ===
 
 export function env_webgpu_create_buffer(deviceId, size, usage, mappedAtCreation) {
     const dev = handles.get(deviceId);
@@ -198,8 +161,6 @@ export function env_webgpu_copy_buffer_to_buffer_in_encoder(encoderId, srcId, sr
     encoder.copyBufferToBuffer(src, Number(srcOffset), dst, Number(dstOffset), Number(size));
 }
 
-// === Shader Management ===
-
 export function env_webgpu_create_shader_module(deviceId, sourcePtr, sourceLen) {
     const dev = handles.get(deviceId);
     if (!dev) { console.error("[webgpu.js] Invalid device handle:", deviceId); return 0; }
@@ -214,8 +175,6 @@ export function env_webgpu_create_shader_module(deviceId, sourcePtr, sourceLen) 
         return 0;
     }
 }
-
-// === Texture Management ===
 
 export function env_webgpu_create_texture(deviceId, width, height, format, usage) {
     const dev = handles.get(deviceId);
@@ -255,11 +214,6 @@ export function env_webgpu_destroy_texture(textureId) {
     }
 }
 
-// === Bind Group Layout ===
-
-// Layout: binding(u32) visibility(u32) entry_type(u32) buffer_type(u32)
-//         has_min_size(u32) has_dynamic_offset(u32) min_size(u64) padding(u64)
-// Total: 40 bytes per entry
 const BGL_ENTRY_SIZE = 40;
 
 export function env_webgpu_create_bind_group_layout(deviceId, entriesPtr, entriesLen) {
@@ -299,11 +253,6 @@ export function env_webgpu_create_bind_group_layout(deviceId, entriesPtr, entrie
     return handles.create(dev.createBindGroupLayout({ entries }));
 }
 
-// === Bind Group ===
-
-// Layout: binding(u32) entry_type(u32) resource_handle(u32) padding(u32)
-//         offset(u64) size(u64)
-// Total: 32 bytes per entry
 const BG_ENTRY_SIZE = 32;
 
 export function env_webgpu_create_bind_group(deviceId, layoutId, entriesPtr, entriesLen) {
@@ -337,8 +286,6 @@ export function env_webgpu_create_bind_group(deviceId, layoutId, entriesPtr, ent
     return handles.create(dev.createBindGroup({ layout, entries }));
 }
 
-// === Pipeline Layout ===
-
 export function env_webgpu_create_pipeline_layout(deviceId, layoutsPtr, layoutsLen) {
     const dev = handles.get(deviceId);
     if (!dev) { console.error("[webgpu.js] Invalid device handle"); return 0; }
@@ -353,8 +300,6 @@ export function env_webgpu_create_pipeline_layout(deviceId, layoutsPtr, layoutsL
 
     return handles.create(dev.createPipelineLayout({ bindGroupLayouts }));
 }
-
-// === Compute Pipeline ===
 
 export function env_webgpu_create_compute_pipeline(deviceId, layoutId, shaderId, entryPointPtr, entryPointLen) {
     const dev = handles.get(deviceId);
@@ -374,8 +319,6 @@ export function env_webgpu_create_compute_pipeline(deviceId, layoutId, shaderId,
         return 0;
     }
 }
-
-// === Render Pipeline ===
 
 export function env_webgpu_create_render_pipeline(deviceId, layoutId, shaderId, vertexEntryPtr, vertexEntryLen, fragmentEntryPtr, fragmentEntryLen) {
     const dev = handles.get(deviceId);
@@ -448,8 +391,6 @@ export function env_webgpu_create_render_pipeline_hdr(deviceId, layoutId, shader
     }
 }
 
-// === Command Encoder ===
-
 export function env_webgpu_create_command_encoder(deviceId) {
     const dev = handles.get(deviceId);
     if (!dev) { console.error("[webgpu.js] Invalid device handle"); return 0; }
@@ -474,15 +415,7 @@ export function env_webgpu_queue_submit(deviceId, commandBufferId) {
     handles.release(commandBufferId);
 }
 
-// === Compute Pass ===
-
 export function env_webgpu_begin_compute_pass(encoderId) {
-    const encoder = handles.get(encoderId);
-    if (!encoder) { console.error("[webgpu.js] Invalid encoder handle"); return 0; }
-    return handles.create(encoder.beginComputePass());
-}
-
-export function env_webgpu_encoder_begin_compute_pass(encoderId) {
     const encoder = handles.get(encoderId);
     if (!encoder) { console.error("[webgpu.js] Invalid encoder handle"); return 0; }
     return handles.create(encoder.beginComputePass());
@@ -521,8 +454,6 @@ export function env_webgpu_compute_pass_end(passId) {
     pass.end();
     handles.release(passId);
 }
-
-// === Render Pass ===
 
 export function env_webgpu_begin_render_pass(r, g, b, a) {
     if (!device || !context) { console.error("[webgpu.js] Device or context not initialized"); return 0; }
@@ -611,8 +542,6 @@ export function env_webgpu_render_pass_end(passId) {
         renderPassEncoder = null;
     }
 }
-
-// === Present ===
 
 export function env_webgpu_present() {
     if (commandEncoder && device) {

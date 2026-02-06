@@ -1,5 +1,3 @@
-// UI and Input Handling for Particle Life Demo
-
 export class UI {
     constructor(wasmInstance, canvas) {
         this.wasm = wasmInstance;

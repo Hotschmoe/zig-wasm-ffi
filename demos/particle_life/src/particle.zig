@@ -1,5 +1,3 @@
-const std = @import("std");
-
 pub const Particle = extern struct {
     x: f32,
     y: f32,

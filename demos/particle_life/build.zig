@@ -33,14 +33,12 @@ pub fn build(b: *std.Build) void {
     exe.entry = .disabled;
     exe.export_memory = true;
 
-    // Memory configuration for particle simulation
-    exe.initial_memory = 64 * 1024 * 1024; // 64MB initial
-    exe.max_memory = 512 * 1024 * 1024; // 512MB max
-    exe.stack_size = 32 * 1024 * 1024; // 32MB stack
+    exe.initial_memory = 64 * 1024 * 1024;
+    exe.max_memory = 512 * 1024 * 1024;
+    exe.stack_size = 32 * 1024 * 1024;
 
     b.installArtifact(exe);
 
-    // --- Directory Setup for project-level 'dist' ---
     const clean_dist = b.addSystemCommand(if (builtin.os.tag == .windows)
         &[_][]const u8{ "cmd", "/c", "if", "exist", "dist", "rd", "/s", "/q", "dist" }
     else
@@ -52,7 +50,6 @@ pub fn build(b: *std.Build) void {
         &[_][]const u8{ "mkdir", "-p", "dist" });
     make_dist.step.dependOn(&clean_dist.step);
 
-    // --- Asset Installation to project-level 'dist' directory ---
     const copy_wasm = b.addInstallFile(exe.getEmittedBin(), "../dist/app.wasm");
     copy_wasm.step.dependOn(&make_dist.step);
 
@@ -63,13 +60,11 @@ pub fn build(b: *std.Build) void {
     });
     copy_web_assets.step.dependOn(&make_dist.step);
 
-    // --- API GLUE FILE MANAGEMENT ---
     const used_web_apis = [_][]const u8{
         "webgpu",
         "webinput",
     };
 
-    // --- Run and Deploy Steps ---
     const run_cmd = b.addSystemCommand(&.{ "python3", "-m", "http.server", "-d", "dist" });
     run_cmd.step.dependOn(&copy_wasm.step);
     run_cmd.step.dependOn(&copy_web_assets.step);

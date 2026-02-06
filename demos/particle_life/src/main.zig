@@ -1,12 +1,9 @@
-const std = @import("std");
 const ffi = @import("zig-wasm-ffi");
 const webgpu = ffi.webgpu;
 
 const simulation = @import("simulation.zig");
-const particle = @import("particle.zig");
 const input_handler = @import("input_handler.zig");
 
-var time_elapsed: f32 = 0.0;
 var sim: ?simulation.Simulation = null;
 var sim_initialized: bool = false;
 var initial_seed: u32 = 42;
@@ -49,8 +46,6 @@ export fn onResize(width: f32, height: f32) void {
 }
 
 export fn update(dt: f32) void {
-    time_elapsed += dt;
-
     if (!webgpu.isInitialized()) {
         return;
     }

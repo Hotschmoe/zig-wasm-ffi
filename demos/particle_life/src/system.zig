@@ -59,22 +59,14 @@ pub fn generateForceMatrix(forces: []particle.Force, species_count: u32, rng: *R
             for ((i + 1)..n) |j| {
                 const idx_ij = i * @as(usize, n) + j;
                 const idx_ji = j * @as(usize, n) + i;
-                var f_ij = forces[idx_ij];
-                var f_ji = forces[idx_ji];
-                const s = (f_ij.strength + f_ji.strength) / 2.0;
-                const r = (f_ij.radius + f_ji.radius) / 2.0;
-                const cs = (f_ij.collision_strength + f_ji.collision_strength) / 2.0;
-                const cr = (f_ij.collision_radius + f_ji.collision_radius) / 2.0;
-                f_ij.strength = s;
-                f_ji.strength = s;
-                f_ij.radius = r;
-                f_ji.radius = r;
-                f_ij.collision_strength = cs;
-                f_ji.collision_strength = cs;
-                f_ij.collision_radius = cr;
-                f_ji.collision_radius = cr;
-                forces[idx_ij] = f_ij;
-                forces[idx_ji] = f_ji;
+                const avg = particle.Force{
+                    .strength = (forces[idx_ij].strength + forces[idx_ji].strength) / 2.0,
+                    .radius = (forces[idx_ij].radius + forces[idx_ji].radius) / 2.0,
+                    .collision_strength = (forces[idx_ij].collision_strength + forces[idx_ji].collision_strength) / 2.0,
+                    .collision_radius = (forces[idx_ij].collision_radius + forces[idx_ji].collision_radius) / 2.0,
+                };
+                forces[idx_ij] = avg;
+                forces[idx_ji] = avg;
             }
         }
     }

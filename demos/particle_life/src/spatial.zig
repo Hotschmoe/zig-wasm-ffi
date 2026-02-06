@@ -53,7 +53,6 @@ pub const SpatialPipeline = struct {
 
     pub fn init(
         particle_buffer: webgpu.Buffer,
-        particle_count: u32,
         species_buffer: webgpu.Buffer,
         force_buffer: webgpu.Buffer,
         options_buffer: webgpu.Buffer,
@@ -61,7 +60,6 @@ pub const SpatialPipeline = struct {
         sim_height: f32,
         max_force_radius: f32,
     ) !SpatialPipeline {
-        _ = particle_count;
         log("Setting up spatial optimization pipeline...");
 
         const grid = calculateGridSize(sim_width, sim_height, max_force_radius);

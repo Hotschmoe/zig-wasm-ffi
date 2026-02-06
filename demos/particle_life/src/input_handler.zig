@@ -1,8 +1,3 @@
-const ffi = @import("zig-wasm-ffi");
-const webinput = ffi.webinput;
-
-// Additional input state for the simulation that goes beyond what the
-// library tracks (pan, zoom, sim options set from JS UI).
 pub const InputState = struct {
     mouse_x: f32 = 0,
     mouse_y: f32 = 0,
@@ -31,8 +26,6 @@ pub const InputState = struct {
 };
 
 pub var state = InputState{};
-
-// FFI Exports called from JavaScript UI
 
 export fn setMousePosition(x: f32, y: f32) void {
     if (state.mouse_initialized) {

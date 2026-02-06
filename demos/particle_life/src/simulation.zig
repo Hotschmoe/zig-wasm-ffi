@@ -135,7 +135,6 @@ pub const Simulation = struct {
         sim.physics_pipeline = try physics.Physics.init(sim.particle_buffer, sim.options_buffer);
         sim.spatial_pipeline = try spatial.SpatialPipeline.init(
             sim.particle_buffer,
-            particle_count,
             sim.species_buffer,
             sim.force_buffer,
             sim.options_buffer,
@@ -333,8 +332,6 @@ pub const Simulation = struct {
         log("HDR render pipeline setup complete");
     }
 
-    var camera_update_count: u32 = 0;
-
     pub fn handleInput(self: *Simulation, input: *const input_handler.InputState, _: f32) void {
         self.friction_coefficient = input.friction;
         self.options.dt = input.time_step;
@@ -418,16 +415,7 @@ pub const Simulation = struct {
 
         self.camera = particle.CameraParams.initForSimulation(canvas_width, canvas_height, self.sim_width, self.sim_height);
         self.camera_buffer.writeTyped(particle.CameraParams, 0, &[_]particle.CameraParams{self.camera});
-
-        camera_update_count += 1;
-        if (camera_update_count <= 2) {
-            log("=== Camera Updated ===");
-            logInt("  Canvas width:", new_width);
-            logInt("  Canvas height:", new_height);
-        }
     }
-
-    var frame_count: u32 = 0;
 
     pub fn update(self: *Simulation, dt: f32) void {
         const clamped_dt = @min(dt, 0.025);
@@ -457,25 +445,11 @@ pub const Simulation = struct {
         } else {
             self.physics_pipeline.update(self.particle_count);
         }
-
-        frame_count += 1;
-        if (frame_count % 60 == 0) {
-            log("Simulation running (60 frames)");
-        }
     }
-
-    var render_frame_count: u32 = 0;
 
     pub fn render(self: *Simulation) void {
         if (!self.glow_pipeline.isValid() or !self.circle_pipeline.isValid() or !self.point_pipeline.isValid()) {
-            log("ERROR: HDR pipelines not initialized");
             return;
-        }
-
-        render_frame_count += 1;
-        if (render_frame_count == 1) {
-            log("=== First Render Frame ===");
-            logInt("  Particle count:", self.particle_count);
         }
 
         const vertex_count = self.particle_count * 6;

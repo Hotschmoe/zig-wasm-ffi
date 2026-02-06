@@ -1,6 +1,3 @@
-// Particle Life Demo - JavaScript Entry Point
-// Initializes WebGPU, loads WASM, and drives the animation loop
-
 import { setupWebGPU, loadBlueNoiseTexture } from './webgpu.js';
 import * as webgpu_glue from './webgpu.js';
 import { setupInputSystem } from './webinput.js';
@@ -112,7 +109,6 @@ function resizeCanvas() {
 
 async function init() {
     try {
-        resizeCanvas();
         window.addEventListener('resize', resizeCanvas);
         await initWASM();
     } catch (error) {

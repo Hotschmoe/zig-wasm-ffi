@@ -1,7 +1,5 @@
-const std = @import("std");
 const ffi = @import("zig-wasm-ffi");
 const webgpu = ffi.webgpu;
-const particle = @import("particle.zig");
 const shaders = @import("shaders.zig");
 
 pub const Physics = struct {

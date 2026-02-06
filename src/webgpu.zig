@@ -1,10 +1,7 @@
-// zig-wasm-ffi/src/webgpu.zig
 const std = @import("std");
 const builtin = @import("builtin");
 
-// ============================================================================
-// Handles
-// ============================================================================
+// --- Handles ---
 
 pub const Handle = u32;
 pub const INVALID_HANDLE: Handle = 0;
@@ -27,37 +24,28 @@ fn HandleType(comptime _: []const u8) type {
     return struct {
         id: Handle,
 
-        const Self = @This();
-
-        pub fn isValid(self: Self) bool {
+        pub fn isValid(self: @This()) bool {
             return self.id != INVALID_HANDLE;
         }
 
-        pub fn invalid() Self {
+        pub fn invalid() @This() {
             return .{ .id = INVALID_HANDLE };
         }
     };
 }
 
-// ============================================================================
-// FFI Binding Layer
-// ============================================================================
-// WASM builds: direct extern "env" calls (unreferenced in test builds, DCE'd).
-// Test builds: calls through overridable function pointers.
+// --- FFI Binding Layer ---
 
-// --- Device / Core ---
 extern "env" fn env_webgpu_create_buffer(device: u32, size: u64, usage: u32, mapped_at_creation: u32) u32;
 extern "env" fn env_webgpu_buffer_write(device: u32, buffer: u32, offset: u64, data_ptr: [*]const u8, data_len: usize) void;
 extern "env" fn env_webgpu_buffer_destroy(buffer: u32) void;
 extern "env" fn env_webgpu_create_shader_module(device: u32, source_ptr: [*]const u8, source_len: usize) u32;
 
-// --- Pipeline ---
 extern "env" fn env_webgpu_create_bind_group_layout(device: u32, entries_ptr: usize, entries_len: usize) u32;
 extern "env" fn env_webgpu_create_bind_group(device: u32, layout: u32, entries_ptr: usize, entries_len: usize) u32;
 extern "env" fn env_webgpu_create_pipeline_layout(device: u32, layouts_ptr: usize, layouts_len: usize) u32;
 extern "env" fn env_webgpu_create_compute_pipeline(device: u32, layout: u32, shader: u32, entry_ptr: [*]const u8, entry_len: usize) u32;
 
-// --- Compute ---
 extern "env" fn env_webgpu_create_command_encoder(device: u32) u32;
 extern "env" fn env_webgpu_begin_compute_pass(encoder: u32) u32;
 extern "env" fn env_webgpu_compute_pass_set_pipeline(pass: u32, pipeline: u32) void;
@@ -67,21 +55,17 @@ extern "env" fn env_webgpu_compute_pass_end(pass: u32) void;
 extern "env" fn env_webgpu_command_encoder_finish(encoder: u32) u32;
 extern "env" fn env_webgpu_queue_submit(device: u32, command_buffer: u32) void;
 
-// --- Render ---
 extern "env" fn env_webgpu_begin_render_pass(r: f32, g: f32, b: f32, a: f32) u32;
 extern "env" fn env_webgpu_end_render_pass(encoder: u32) void;
 extern "env" fn env_webgpu_present() void;
 
-// --- Texture ---
 extern "env" fn env_webgpu_create_texture(device: u32, width: u32, height: u32, format: u32, usage: u32) u32;
 extern "env" fn env_webgpu_create_texture_view(texture: u32) u32;
 extern "env" fn env_webgpu_destroy_texture(texture: u32) void;
 
-// --- Render Pipeline ---
 extern "env" fn env_webgpu_create_render_pipeline(device: u32, layout: u32, shader: u32, v_ptr: [*]const u8, v_len: usize, f_ptr: [*]const u8, f_len: usize) u32;
 extern "env" fn env_webgpu_create_render_pipeline_hdr(device: u32, layout: u32, shader: u32, v_ptr: [*]const u8, v_len: usize, f_ptr: [*]const u8, f_len: usize, format: u32, blending: u32) u32;
 
-// --- Render Pass (extended) ---
 extern "env" fn env_webgpu_begin_render_pass_for_particles(r: f32, g: f32, b: f32, a: f32) u32;
 extern "env" fn env_webgpu_begin_render_pass_hdr(texture_view: u32, r: f32, g: f32, b: f32, a: f32) u32;
 extern "env" fn env_webgpu_render_pass_set_pipeline(pass: u32, pipeline: u32) void;
@@ -89,62 +73,32 @@ extern "env" fn env_webgpu_render_pass_set_bind_group(pass: u32, index: u32, bin
 extern "env" fn env_webgpu_render_pass_draw(pass: u32, vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32) void;
 extern "env" fn env_webgpu_render_pass_end(pass: u32) void;
 
-// --- Buffer Copy ---
 extern "env" fn env_webgpu_copy_buffer_to_buffer(src: u32, src_offset: u64, dst: u32, dst_offset: u64, size: u64) void;
 extern "env" fn env_webgpu_copy_buffer_to_buffer_in_encoder(encoder: u32, src: u32, src_offset: u64, dst: u32, dst_offset: u64, size: u64) void;
 
-// --- Additional Compute ---
 extern "env" fn env_webgpu_compute_pass_set_bind_group_with_offset(pass: u32, index: u32, bind_group: u32, offset: u32) void;
-extern "env" fn env_webgpu_encoder_begin_compute_pass(encoder: u32) u32;
 
-// --- Noop stubs for test mocking ---
-fn noopRet0_0() u32 {
-    return 0;
-}
-fn noopRet0_u32(_: u32) u32 {
-    return 0;
-}
-fn noopRet0_u32_u64_u32_u32(_: u32, _: u64, _: u32, _: u32) u32 {
-    return 0;
-}
-fn noopVoid_u32_u32_u64_ptr_usize(_: u32, _: u32, _: u64, _: [*]const u8, _: usize) void {}
+fn noopRet0_u32(_: u32) u32 { return 0; }
+fn noopRet0_u32_u64_u32_u32(_: u32, _: u64, _: u32, _: u32) u32 { return 0; }
+fn noopRet0_u32_ptr_usize(_: u32, _: [*]const u8, _: usize) u32 { return 0; }
+fn noopRet0_u32_usize_usize(_: u32, _: usize, _: usize) u32 { return 0; }
+fn noopRet0_u32_u32_usize_usize(_: u32, _: u32, _: usize, _: usize) u32 { return 0; }
+fn noopRet0_u32_u32_u32_ptr_usize(_: u32, _: u32, _: u32, _: [*]const u8, _: usize) u32 { return 0; }
+fn noopRet0_u32_u32_u32_u32_u32(_: u32, _: u32, _: u32, _: u32, _: u32) u32 { return 0; }
+fn noopRet0_4f32(_: f32, _: f32, _: f32, _: f32) u32 { return 0; }
+fn noopRet0_u32_4f32(_: u32, _: f32, _: f32, _: f32, _: f32) u32 { return 0; }
+fn noopRet0_7u32_ptr(_: u32, _: u32, _: u32, _: [*]const u8, _: usize, _: [*]const u8, _: usize) u32 { return 0; }
+fn noopRet0_7u32_ptr_2u32(_: u32, _: u32, _: u32, _: [*]const u8, _: usize, _: [*]const u8, _: usize, _: u32, _: u32) u32 { return 0; }
+fn noopVoid() void {}
 fn noopVoid_u32(_: u32) void {}
-fn noopRet0_u32_ptr_usize(_: u32, _: [*]const u8, _: usize) u32 {
-    return 0;
-}
-fn noopRet0_u32_usize_usize(_: u32, _: usize, _: usize) u32 {
-    return 0;
-}
-fn noopRet0_u32_u32_usize_usize(_: u32, _: u32, _: usize, _: usize) u32 {
-    return 0;
-}
-fn noopRet0_u32_u32_u32_ptr_usize(_: u32, _: u32, _: u32, _: [*]const u8, _: usize) u32 {
-    return 0;
-}
 fn noopVoid_u32_u32(_: u32, _: u32) void {}
 fn noopVoid_u32_u32_u32(_: u32, _: u32, _: u32) void {}
 fn noopVoid_u32_u32_u32_u32(_: u32, _: u32, _: u32, _: u32) void {}
-fn noopRet0_4f32(_: f32, _: f32, _: f32, _: f32) u32 {
-    return 0;
-}
-fn noopVoid() void {}
-fn noopRet0_u32_u32_u32_u32_u32(_: u32, _: u32, _: u32, _: u32, _: u32) u32 {
-    return 0;
-}
-fn noopRet0_7u32_ptr(_: u32, _: u32, _: u32, _: [*]const u8, _: usize, _: [*]const u8, _: usize) u32 {
-    return 0;
-}
-fn noopRet0_7u32_ptr_2u32(_: u32, _: u32, _: u32, _: [*]const u8, _: usize, _: [*]const u8, _: usize, _: u32, _: u32) u32 {
-    return 0;
-}
-fn noopRet0_u32_4f32(_: u32, _: f32, _: f32, _: f32, _: f32) u32 {
-    return 0;
-}
 fn noopVoid_u32_u32_u32_u32_u32(_: u32, _: u32, _: u32, _: u32, _: u32) void {}
+fn noopVoid_u32_u32_u64_ptr_usize(_: u32, _: u32, _: u64, _: [*]const u8, _: usize) void {}
 fn noopVoid_u32_u64_u32_u64_u64(_: u32, _: u64, _: u32, _: u64, _: u64) void {}
 fn noopVoid_u32_u32_u64_u32_u64_u64(_: u32, _: u32, _: u64, _: u32, _: u64, _: u64) void {}
 
-// --- Mock function pointers (overridable in tests) ---
 pub var mock_create_buffer: *const fn (u32, u64, u32, u32) u32 = &noopRet0_u32_u64_u32_u32;
 pub var mock_buffer_write: *const fn (u32, u32, u64, [*]const u8, usize) void = &noopVoid_u32_u32_u64_ptr_usize;
 pub var mock_buffer_destroy: *const fn (u32) void = &noopVoid_u32;
@@ -178,9 +132,6 @@ pub var mock_render_pass_end: *const fn (u32) void = &noopVoid_u32;
 pub var mock_copy_buffer_to_buffer: *const fn (u32, u64, u32, u64, u64) void = &noopVoid_u32_u64_u32_u64_u64;
 pub var mock_copy_buffer_to_buffer_in_encoder: *const fn (u32, u32, u64, u32, u64, u64) void = &noopVoid_u32_u32_u64_u32_u64_u64;
 pub var mock_compute_pass_set_bind_group_with_offset: *const fn (u32, u32, u32, u32) void = &noopVoid_u32_u32_u32_u32;
-pub var mock_encoder_begin_compute_pass: *const fn (u32) u32 = &noopRet0_u32;
-
-// --- Inline FFI dispatch (comptime test vs. WASM switching) ---
 
 inline fn ffiCreateBuffer(dev: u32, size: u64, usage: u32, mapped: u32) u32 {
     if (comptime builtin.is_test) return mock_create_buffer(dev, size, usage, mapped);
@@ -314,14 +265,8 @@ inline fn ffiComputePassSetBindGroupWithOffset(pass: u32, index: u32, bg: u32, o
     if (comptime builtin.is_test) return mock_compute_pass_set_bind_group_with_offset(pass, index, bg, offset);
     return env_webgpu_compute_pass_set_bind_group_with_offset(pass, index, bg, offset);
 }
-inline fn ffiEncoderBeginComputePass(encoder: u32) u32 {
-    if (comptime builtin.is_test) return mock_encoder_begin_compute_pass(encoder);
-    return env_webgpu_encoder_begin_compute_pass(encoder);
-}
 
-// ============================================================================
-// Device
-// ============================================================================
+// --- Device ---
 
 var g_device: DeviceHandle = DeviceHandle.invalid();
 
@@ -337,9 +282,7 @@ pub fn isInitialized() bool {
     return g_device.isValid();
 }
 
-// ============================================================================
-// Buffer Usage Flags
-// ============================================================================
+// --- Buffer ---
 
 pub const BufferUsage = packed struct(u32) {
     map_read: bool = false,
@@ -354,10 +297,6 @@ pub const BufferUsage = packed struct(u32) {
     query_resolve: bool = false,
     _padding: u22 = 0,
 };
-
-// ============================================================================
-// Buffer
-// ============================================================================
 
 pub const Buffer = struct {
     handle: BufferHandle,
@@ -418,9 +357,7 @@ pub fn createUniformBufferWithData(comptime T: type, data: []const T) Buffer {
     return buf;
 }
 
-// ============================================================================
-// Shader
-// ============================================================================
+// --- Shader ---
 
 pub const ShaderModule = struct {
     handle: ShaderModuleHandle,
@@ -436,9 +373,7 @@ pub const ShaderModule = struct {
     }
 };
 
-// ============================================================================
-// Pipeline
-// ============================================================================
+// --- Pipeline ---
 
 pub const ShaderStage = struct {
     pub const VERTEX: u32 = 0x1;
@@ -605,9 +540,7 @@ pub const ComputePipeline = struct {
     }
 };
 
-// ============================================================================
-// Compute
-// ============================================================================
+// --- Compute ---
 
 pub const CommandEncoder = struct {
     handle: CommandEncoderHandle,
@@ -697,9 +630,7 @@ pub fn copyBufferToBuffer(src: BufferHandle, src_offset: u64, dst: BufferHandle,
     ffiCopyBufferToBuffer(src.id, src_offset, dst.id, dst_offset, size);
 }
 
-// ============================================================================
-// Render
-// ============================================================================
+// --- Render ---
 
 pub const ClearColor = struct {
     r: f32,
@@ -832,9 +763,7 @@ pub fn beginRenderPassHDR(texture_view: TextureViewHandle, clear_color: ClearCol
     return .{ .handle = .{ .id = id } };
 }
 
-// ============================================================================
-// Texture
-// ============================================================================
+// --- Texture ---
 
 pub const TextureFormat = enum(u32) {
     rgba16float = 0,
@@ -924,9 +853,7 @@ pub fn createRenderTexture(width: u32, height: u32, format: TextureFormat) Textu
     return Texture.create(width, height, format, .{ .render_attachment = true, .texture_binding = true });
 }
 
-// ============================================================================
-// Test Utilities
-// ============================================================================
+// --- Test Utilities ---
 
 pub fn testing_reset_state() void {
     g_device = DeviceHandle.invalid();
