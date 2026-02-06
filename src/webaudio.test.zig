@@ -89,7 +89,7 @@ fn reset_mock_states() void {
 
     duplicate_test_first_call_done = false; // Reset for the specific test
 
-    webaudio.testing_reset_internal_webaudio_state_for_tests();
+    webaudio.init_webaudio_module_state();
 }
 
 // --- Tests ---
