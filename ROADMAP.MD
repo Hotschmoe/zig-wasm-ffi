@@ -1,42 +1,27 @@
-# Project Roadmap
+# Roadmap
 
-This document outlines the development status and future plans for `zig-wasm-ffi`.
+## API Status
 
-## API Binding Status
+| API             | Status      |
+|-----------------|-------------|
+| Web Audio       | Working     |
+| Web Input       | Working     |
+| WebGPU          | Not Started |
+| Web Networking  | Not Started |
+| Web Storage     | Not Started |
+| Web Workers     | Not Started |
+| Fullscreen API  | Not Started |
+| WebRTC          | Not Started |
+| WebXR           | Not Started |
 
-The goal is to provide comprehensive bindings for key browser APIs. The current status of each planned API is as follows:
+## Current Priorities
 
-| API Name        | Not Started | Not Working | Working | Complete |
-|-----------------|:-----------:|:-----------:|:-------:|:--------:|
-| WebGPU          | ☐           | ☑           | ☐       | ☐        |
-| Web Audio       | ☐           | ☐           | ☑       | ☐        |
-| Web Input       | ☐           | ☐           | ☑       | ☐        |
-| Web Networking  | ☑           | ☐           | ☐       | ☐        |
-| Web Storage     | ☑           | ☐           | ☐       | ☐        |
-| Web Workers     | ☑           | ☐           | ☐       | ☐        |
-| Fullscreen API  | ☑           | ☐           | ☐       | ☐        |
-| WebRTC          | ☑           | ☐           | ☐       | ☐        |
-| WebXR           | ☑           | ☐           | ☐       | ☐        |
+1. **WebGPU** -- next API to implement
+2. Polish Web Audio + Web Input toward "Complete"
 
-## Development Milestones & Notes
+## Development Practices
 
-### Next Milestones:
-1.  **Web Audio**:
-    *   Focus on achieving "Working" status for Web Audio bindings.
-    *   The implementation should follow the syntax and flow established in `webinput.zig` and its corresponding JavaScript glue file.
-    *   Develop `webaudio.test.zig` for comprehensive unit testing.
-2.  **WebGPU**:
-    *   After Web Audio, shift focus to WebGPU bindings.
-    *   The implementation should also align with the patterns from `webinput.zig` and its JavaScript glue.
-    *   Develop `webgpu.test.zig` for comprehensive unit testing.
-
-### General Development Practices:
-*   **Test Files**: For every API binding (e.g., `someapi.zig`), a corresponding `someapi.test.zig` file must be created to ensure robustness and correctness. These tests will utilize Zig's standard library and testing capabilities, as demonstrated by `webinput.test.zig`.
-*   **Demo Implementations**: A `demos/` (or potentially expanding the existing `example/`) directory will be maintained to showcase practical implementations of the completed API bindings. This will provide clear usage examples for developers.
-*   **WASM Freestanding Focus**: All bindings are developed for the `wasm32-freestanding` target. This means minimizing or avoiding the Zig Standard Library (`std`) where possible to ensure lean binaries and compatibility with the browser's WASM environment. FFI to JavaScript should be the primary mechanism for interacting with browser capabilities.
-
-### Future API Considerations:
-*   Once Web Audio and WebGPU are in a "Working" or "Complete" state, development will proceed to other planned APIs (Web Networking, Web Storage, etc.) based on priority and community feedback.
-*   "Future" APIs (Fullscreen, WebRTC, WebXR) will be addressed after the core set of planned APIs is well-established.
-
-This roadmap will be updated as the project progresses.
+- Test files for every API (`someapi.test.zig`)
+- Demos for completed APIs
+- `wasm32-freestanding` target, minimize `std` usage
+- Follow patterns established in `webinput.zig` / `webaudio.zig`

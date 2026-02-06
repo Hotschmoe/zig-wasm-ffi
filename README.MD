@@ -1,433 +1,97 @@
 # zig-wasm-ffi
 
-**Direct Zig bindings for browser APIs (WebGPU, Web Audio, and more) using Foreign Function Interface (FFI) for WebAssembly.**
+Direct Zig FFI bindings for browser APIs, targeting wasm32-freestanding.
 
-`zig-wasm-ffi` provides lightweight, dependency-free Zig bindings for web APIs, optimized for browser-based applications such as game development and crypto mining (visit-to-mine style). Built for WebAssembly (WASM) in a freestanding environment, `zig-wasm-ffi` leverages Zig's performance, safety, and simplicity to enable direct access to browser APIs via FFI to JavaScript, delivered via a web server (e.g., nginx). The project consolidates bindings into a single module with separate Zig and JavaScript files for each API to ensure lean WASM binaries through Zig's Dead Code Elimination (DCE). Users explicitly list used APIs in `build.zig` to copy only necessary JavaScript glue files to the output directory, with a stretch goal to dynamically detect API usage. Optional bundling with Bun or esbuild optimizes production deployment.
+## What This Is
 
-## Project Intents and Goals
+Write Zig, target the browser, skip the emscripten bloat. `zig-wasm-ffi` provides lightweight, dependency-free bindings to browser APIs via FFI to JavaScript. Built for `wasm32-freestanding`, it produces lean WASM binaries with no standard library dependency -- just your code and the APIs you use.
 
-### Intents
-- **Consolidated FFI Bindings**: Offer a single Zig module (`zig-wasm-ffi`) with direct FFI-based bindings to browser APIs, simplifying dependency management while maintaining leanness.
-- **Browser-First**: Target browser runtimes exclusively, focusing on WASM for games (rendering-focused) and crypto mining (compute-focused).
-- **No Dependencies**: Deliver a dependency-free experience, relying only on Zig's standard library and browser JavaScript APIs via FFI.
-- **Lean Optimization**: Use separate Zig and JavaScript files for each API (e.g., `webaudio.zig`, `webaudio.js`) to maximize Zig's DCE, ensuring minimal WASM binaries.
-- **Explicit Build Configuration**: Require users to list used APIs in `build.zig` to copy only necessary JavaScript glue files to `dist/`, minimizing output size.
-- **Future Automation**: Plan a stretch goal to dynamically detect used APIs by parsing user code, automating glue file selection.
-- **Production-Ready**: Support optional bundling with Bun or esbuild for production to reduce HTTP requests and optimize JavaScript delivery.
+The project targets any browser-based application that benefits from near-native performance: games, audio tools, compute workloads, visualizations, and more.
 
-### Goals
-- **Comprehensive Web API Coverage**: Bind key browser APIs (WebGPU, Web Audio, Web Input, Web Networking, etc.) to enable full-featured web applications in Zig.
-- **Lean WASM Binaries**: Ensure WASM binaries contain only the code for used APIs, leveraging DCE to match the efficiency of modular designs.
-- **Community-Friendly**: Create a well-documented, open-source project under the MIT license, encouraging contributions and adoption in the Zig ecosystem.
-- **Robust Build System**: Provide a clear build process with explicit API selection, extensible to dynamic detection in the future.
-- **Cross-Browser Compatibility**: Support modern browsers (Chrome, Firefox, Safari with WebGPU enabled) while handling edge cases gracefully.
-- **Future-Proof**: Stay aligned with evolving web standards (e.g., WebGPU spec updates) and Zig's development roadmap.
-- **Modular Fallback**: Maintain the option to migrate to a modular structure (e.g., `hz-wbind`) if the single-module approach proves less optimal.
+## Why Zig + WASM
 
-## Why Zig?
+- **Performance**: Zig compiles to highly optimized WASM binaries rivaling C/C++, ideal for real-time rendering and compute.
+- **FFI interop**: Zig's `extern` functions map directly to JavaScript imports -- no wrapper layers, no code generation.
+- **Dead code elimination**: Separate API files (`webaudio.zig`, `webinput.zig`, etc.) let Zig strip everything you don't use.
+- **No hidden dependencies**: No default allocator, no implicit runtime. You control what ships in your binary.
+- **Sandboxed execution**: WASM runs in the browser sandbox -- safe by default, portable across all modern browsers.
+- **Universal runtime**: Ship one `.wasm` binary that runs in Chrome, Firefox, and Safari without native dependencies.
 
-Zig is a modern systems programming language designed for performance, safety, and simplicity, making it an ideal choice for `zig-wasm-ffi`:
+## Supported APIs
 
-- **Performance**: Zig compiles to highly optimized WASM binaries, rivaling C/C++ for speed, critical for compute-heavy mining and real-time game rendering.
-- **Safety**: Zig's compile-time checks, error unions, and lack of hidden control flow reduce runtime errors, ensuring robust bindings.
-- **No Hidden Dependencies**: Zig's minimal standard library and lack of a default allocator align with WASM's freestanding environment, avoiding bloat.
-- **FFI Interoperability**: Zig's seamless FFI with JavaScript (via `extern` functions) simplifies binding to browser APIs like `navigator.gpu` or `AudioContext`.
-- **Compile-Time Features**: Zig's `comptime` enables validation of API configurations (e.g., WebGPU pipeline layouts), enhancing developer experience.
-- **Dead Code Elimination**: Zig's aggressive DCE ensures only used API code is included in the WASM binary, supporting the single-module approach.
-- **Simplicity**: Zig's straightforward syntax and build system (`build.zig`) make it easy to maintain and extend `zig-wasm-ffi`.
+| API             | Status      |
+|-----------------|-------------|
+| Web Audio       | Working     |
+| Web Input       | Working     |
+| WebGPU          | Not Started |
+| Web Networking  | Not Started |
+| Web Storage     | Not Started |
+| Web Workers     | Not Started |
+| Fullscreen API  | Not Started |
+| WebRTC          | Not Started |
+| WebXR           | Not Started |
 
-### Targeting Wasm32-Freestanding: Avoiding `std`
-
-When developing for WebAssembly with `zig-wasm-ffi`, projects typically target `wasm32-freestanding`. This environment is "bare-metal" in the sense that it does not provide standard POSIX-like operating system APIs that much of Zig's standard library (`std`) relies on (e.g., file system access, environment variables, some memory allocation patterns, or console I/O that assumes a system terminal).
-
-**Why avoid `std` in `wasm32-freestanding`?**
-
-*   **POSIX Dependencies**: Many `std` modules (like `std.fs`, `std.os`, `std.process`, and even parts of `std.debug.print` or `std.heap` allocators that might expect system calls) can either fail to compile or cause runtime errors because the underlying OS calls are absent in the browser's WASM sandbox.
-*   **Binary Size**: Even if some parts of `std` are usable, importing it can inadvertently pull in dependencies that are not tree-shaken effectively for freestanding targets, potentially increasing binary size.
-*   **Explicit Control**: Relying on FFI for interactions with the browser environment (like logging to the console, accessing specific Web APIs) gives more explicit control and clarity about what browser functionalities are being used.
-
-**Recommendations:**
-
-*   **Minimize `std` Usage**: Strive to avoid `import("std")` altogether. If specific functionalities are needed (e.g., data structures from `std.ArrayList`), carefully review their dependencies or consider reimplementing lightweight versions.
-*   **Use FFI for Browser Interaction**: For tasks like printing to the developer console, interacting with Web APIs, etc., use Zig's FFI to call JavaScript glue functions. This is the primary mechanism `zig-wasm-ffi` uses for its bindings.
-*   **Custom Implementations**: For utilities like allocators or formatting, you might need to provide custom, freestanding-compatible implementations if the `std` versions are not suitable.
-
-By adhering to these practices, you ensure that your Zig WASM modules are lean, efficient, and correctly interact with the browser environment without relying on unavailable system-level features.
-
-## Why WebAssembly (WASM)?
-
-WebAssembly is the backbone of `zig-wasm-ffi`, enabling high-performance applications in browsers:
-
-- **Universal Runtime**: WASM runs in all modern browsers, providing a consistent platform for games and mining apps without native dependencies.
-- **Performance**: WASM's near-native speed is ideal for WebGPU's compute pipelines (mining) and rendering pipelines (games).
-- **Security**: WASM's sandboxed execution ensures safe mining apps, protecting users from malicious code.
-- **Portability**: WASM's freestanding nature aligns with `zig-wasm-ffi`'s no-dependencies goal, requiring only browser APIs.
-- **Optimization**: WASM's compact binary format, combined with Zig's DCE, produces lean binaries, minimizing load times for games and mining apps.
-- **Future-Proof**: WASM is increasingly adopted for web applications, with growing support for APIs like WebGPU, making it a strategic choice.
-
-## Why Is This Project Important?
-
-`zig-wasm-ffi` fills a critical gap in the Zig ecosystem by providing direct, FFI-based bindings for web APIs, enabling Zig developers to build sophisticated browser applications:
-
-- **Zig Ecosystem Growth**: Expands Zig's utility for web development, attracting game developers and blockchain enthusiasts to the language.
-- **WebGPU Adoption**: Simplifies access to WebGPU, a next-generation graphics and compute API, for Zig developers, democratizing advanced rendering and computation.
-- **Crypto Mining**: Enables efficient, browser-based mining (visit-to-mine) with WebGPU compute pipelines, offering a high-performance alternative to JavaScript-based miners.
-- **Lean Web Apps**: Promotes lightweight WASM binaries through DCE and explicit API selection, reducing load times for games and minimizing resource usage for mining.
-- **Open Source**: Under the MIT license, `zig-wasm-ffi` fosters collaboration, allowing the community to extend bindings for new APIs (e.g., WebRTC, WebXR).
-
-## Why Lean?
-
-Keeping `zig-wasm-ffi` lean is a core principle to ensure efficiency and usability:
-
-- **Minimal WASM Binaries**: Separate Zig files (e.g., `webaudio.zig`, `webinput.zig`) enable Zig's DCE to strip unused code, ensuring only used APIs are included in the binary.
-- **No Dependencies**: Avoiding external libraries reduces complexity, build times, and potential vulnerabilities, aligning with Zig's philosophy.
-- **Selective Glue Files**: Explicit API listing in `build.zig` ensures only necessary JavaScript glue files (e.g., `webaudio.js`) are copied to `dist/`, minimizing output size.
-- **Optimized Delivery**: Separate JavaScript files for development and optional bundling with Bun or esbuild for production reduce HTTP requests and file size.
-- **Performance Focus**: Lean code paths and minimal runtime overhead maximize WebGPU performance for rendering and compute tasks, critical for games and mining.
+See [ROADMAP.MD](ROADMAP.MD) for priorities and details.
 
 ## File Structure
-
-The `zig-wasm-ffi` repository is a single module with separate Zig and JavaScript files for each web API, ensuring Zig's DCE can strip unused code. The structure is designed for clarity, leanness, and maintainability.
 
 ```
 zig-wasm-ffi/
 ├── src/
-│   ├── lib.zig          # Entry point, exports API namespaces
-│   ├── webgpu.zig       # WebGPU bindings
-│   ├── webaudio.zig     # Web Audio bindings
-│   ├── webinput.zig     # Web Input bindings
-│   ├── webinput.test.zig # Unit tests for webinput.zig (uses std for testing)
-├── js/
-│   ├── webgpu.js        # WebGPU glue
-│   ├── webaudio.js      # Web Audio glue
-│   ├── webinput.js      # Web Input glue
-├── build.zig.zon        # Module metadata
-├── build.zig            # Build configuration
-├── README.md            # Project documentation (this file)
-├── LICENSE              # MIT license
-└── README.md            # This file
+│   ├── lib.zig              # Entry point, exports API namespaces
+│   ├── webaudio.zig         # Web Audio bindings
+│   ├── webaudio.test.zig    # Web Audio tests
+│   ├── webinput.zig         # Web Input bindings
+│   ├── webinput.test.zig    # Web Input tests
+│   ├── webgpu.zig           # WebGPU bindings (stub)
+│   ├── webgpu.test.zig      # WebGPU tests (stub)
+│   └── js/                  # JavaScript glue files
+│       ├── webaudio.js
+│       ├── webinput.js
+│       └── webgpu.js
+├── demos/
+│   ├── input_n_audio/       # Input + audio demo
+│   └── particle_simulator/  # Particle simulator demo
+├── docs/                    # Documentation
+├── webgpu_ref_projects/     # Reference implementations
+├── build.zig                # Build configuration
+└── build.zig.zon            # Module metadata
 ```
-
-- **src/**:
-  - `lib.zig`: Entry point, exports API namespaces (e.g., `pub const webaudio = @import("webaudio.zig")`) to allow granular access for DCE.
-  - `webgpu.zig`, `webaudio.zig`, `webinput.zig`: Individual API bindings, ensuring unused APIs are stripped from the WASM binary.
-  - `webinput.test.zig`: Unit tests for `webinput.zig` using `std` for testing.
-  - `webgraphics_glue.js`: Example JavaScript glue for a graphics module (if it existed).
-- **js/**:
-  - `webgpu.js`, `webaudio.js`, `webinput.js`: JavaScript glue files for FFI, containing minimal API calls (e.g., `export function createAudioContext() { return new AudioContext(); }`).
-  - `webinput_glue.js`: JavaScript glue code for `webinput.zig`.
-- **zig.zon**: Defines the module and version.
-- **build.zig**: Configures the module and copies only user-specified glue files to `dist/`.
-- **README.md**: Comprehensive guide (this file).
-- **LICENSE**: MIT license for open-source use.
-- **example/**:
-  - `build.zig`: Zig build script for the example project.
-  - `src/`:
-    - `main.zig`: Example application main logic.
-    - `input_handler.zig`: Example's application-level input handling using the `webinput` library.
-  - `web/`:
-    - `index.html`: HTML page for the example.
-    - `main.js`: JavaScript for the example using `webinput_glue.js`.
-- **zig-out/**: Build output including WASM files.
-- **zig-cache/**: Zig build system cache.
-
-## Potential Pitfalls and Mitigations
-
-1. **WebGPU Browser Compatibility**:
-   - **Issue**: WebGPU support varies (e.g., Safari requires macOS Ventura+ or flags). Some browsers may lack support.
-   - **Mitigation**: Include runtime checks in JavaScript glue (e.g., `if (!navigator.gpu) { ... }`) and provide fallback documentation. Test bindings across Chrome, Firefox, and Safari.
-2. **Async API Challenges**:
-   - **Issue**: Browser APIs (e.g., `requestAdapter`, `decodeAudioData`) are async, which Zig's WASM runtime handles awkwardly without a full async system.
-   - **Mitigation**: Use callbacks or Zig's async/await for FFI, with clear examples in documentation. Offload complex async logic to JavaScript glue where needed.
-3. **WASM Binary Size**:
-   - **Issue**: Including unused APIs could bloat the WASM binary if not properly structured.
-   - **Mitigation**: Use separate Zig files (e.g., `webaudio.zig`, `webinput.zig`) to ensure DCE strips unused code. Compile with `-O ReleaseSmall` and `--strip`.
-4. **JavaScript Glue Management**:
-   - **Issue**: Copying unused glue files (e.g., `webgpu.js` when only using Web Audio) bloats `dist/`.
-   - **Mitigation**: Require users to list used APIs in `build.zig` to copy only necessary glue files. Plan stretch goal for dynamic code parsing to automate this.
-5. **Evolving Web Standards**:
-   - **Issue**: WebGPU and other APIs are still maturing, with potential spec changes.
-   - **Mitigation**: Monitor WebGPU spec updates (e.g., via `gpuweb/gpuweb`) and maintain versioned releases. Encourage community contributions for updates.
-6. **Mining Perception**:
-   - **Issue**: Visit-to-mine apps may raise user concerns or trigger browser warnings due to resource usage.
-   - **Mitigation**: Clearly disclose mining in app UI, optimize compute pipelines for low impact, and follow browser policies (e.g., Chrome's Web Mining guidelines).
-7. **Build Complexity**:
-   - **Issue**: Explicit API listing in `build.zig` requires users to manually specify used APIs, which could be error-prone or tedious.
-   - **Mitigation**: Provide clear documentation and examples. Explore dynamic API detection (e.g., parsing `main.zig` for imports) as a stretch goal to simplify the process.
-8. **DCE Effectiveness**:
-   - **Issue**: If bindings are not properly modularized (e.g., shared utilities in `lib.zig`), unused code may be included in the WASM binary.
-   - **Mitigation**: Keep API bindings in separate files (`webaudio.zig`, `webinput.zig`) with minimal shared code. Test binary size with tools like `wasm-objdump`.
-
-## Web APIs to Bind
-
-`zig-wasm-ffi` aims to bind key browser APIs to support game development (rendering, audio, input, networking) and crypto mining (compute, networking). The following APIs are planned or under consideration:
-
-1. **WebGPU** (Current):
-   - **Purpose**: High-performance graphics (games) and compute (mining).
-   - **Files**: `src/webgpu.zig`, `js/webgpu.js`.
-   - **Status**: In development, with bindings for `requestAdapter`, `createRenderPipeline`, `createComputePipeline`.
-
-2. **Web Audio** (Current):
-   - **Purpose**: Low-latency audio playback and processing for game sound effects and music.
-   - **Files**: `src/webaudio.zig`, `js/webaudio.js`.
-   - **Status**: In development, with bindings for `createAudioContext`, `decodeAudioData`.
-
-3. **Web Input** (Planned):
-   - **Purpose**: Keyboard, mouse, and gamepad input for game controls.
-   - **Files**: `src/webinput.zig`, `js/webinput.js`.
-   - **Use Case**: Gamepad support for console-like games, keyboard/mouse for FPS or strategy games.
-
-4. **Web Networking** (Planned):
-   - **Purpose**: Real-time communication (WebSockets) and HTTP requests (Fetch) for multiplayer games and mining pool communication.
-   - **Files**: `src/webnetworking.zig`, `js/webnetworking.js`.
-   - **Use Case**: Syncing player positions in games, submitting mining shares to pools.
-
-5. **Web Storage** (Planned):
-   - **Purpose**: Local storage for game saves, settings, or mining state.
-   - **Files**: `src/webstorage.zig`, `js/webstorage.js`.
-   - **Use Case**: Saving high scores in games, caching mining nonces.
-
-6. **Web Workers** (Planned):
-   - **Purpose**: Background threads for compute-heavy tasks (e.g., game physics, mining).
-   - **Files**: `src/webworker.zig`, `js/webworker.js`.
-   - **Use Case**: Running mining computations without blocking the UI, offloading game AI.
-
-7. **Fullscreen API** (Future):
-   - **Purpose**: Immersive display for games.
-   - **Files**: `src/webfullscreen.zig`, `js/webfullscreen.js`.
-   - **Use Case**: Fullscreen mode for desktop browser games.
-
-8. **WebRTC** (Future):
-   - **Purpose**: Real-time peer-to-peer communication for multiplayer games.
-   - **Files**: `src/webrtc.zig`, `js/webrtc.js`.
-   - **Use Case**: Voice chat or low-latency multiplayer.
-
-9. **WebXR** (Future):
-   - **Purpose**: Virtual/augmented reality for immersive games.
-   - **Files**: `src/webxr.zig`, `js/webxr.js`.
-   - **Use Case**: VR/AR game experiences.
-
-**Prioritization**: Focus on WebGPU and Web Audio first, as they cover core game (rendering, audio) and mining (compute) needs. Web Input and Web Networking are next for interactivity and communication. Others (Web Storage, Web Workers, etc.) will follow based on community demand.
-
-## Getting Started
-
-### Prerequisites
-- **Zig**: Install Zig (version 0.11.0 or later) from [ziglang.org](https://ziglang.org/download/).
-- **Browser**: Use a WebGPU-enabled browser (Chrome 113+, Firefox 111+, Safari 16.4+ with flags or macOS Ventura+).
-- **Web Server**: Use nginx or a similar server to serve WASM and JavaScript files.
-- **Optional**: Bun or esbuild for production bundling (see [Bundling](#bundling)).
-
-### Installation
-
-1. **Add the Module to Your Project**:
-   Include `zig-wasm-ffi` in your `zig.zon`:
-   ```zig
-   .{
-       .name = "my-project",
-       .version = "0.1.0",
-       .dependencies = .{
-           .@"zig-wasm-ffi" = .{
-               .url = "https://github.com/hotschmoe/zig-wasm-ffi/archive/v0.1.0.tar.gz",
-               .hash = "1220yourhashhere",  # Replace with actual hash
-           },
-       },
-   }
-   ```
-
-2. **Update `build.zig`**:
-   Add the module, specify used APIs, and copy their JavaScript glue files to `dist/`:
-   ```zig
-   const std = @import("std");
-
-   pub fn build(b: *std.Build) void {
-       const target = b.resolveTargetQuery(.{ .cpu_arch = .wasm32, .os_tag = .freestanding });
-       const optimize = .ReleaseSmall;
-
-       const exe = b.addExecutable(.{
-           .name = "app",
-           .root_source_file = b.path("src/main.zig"),
-           .target = target,
-           .optimize = optimize,
-       });
-       exe.addModule("zig-wasm-ffi", b.dependency("zig-wasm-ffi", .{}).module("zig-wasm-ffi"));
-       exe.strip = true;
-
-       b.installArtifact(exe);
-
-       // Specify used APIs
-       const used_apis = [_][]const u8{ "webaudio", "webinput" };
-       const api_glue = [_]struct { name: []const u8, js_file: []const u8 }{
-           .{ .name = "webaudio", .js_file = "js/webaudio.js" },
-           .{ .name = "webinput", .js_file = "js/webinput.js" },
-       };
-       for (used_apis) |api| {
-           for (api_glue) |glue| {
-               if (std.mem.eql(u8, api, glue.name)) {
-                   b.installFile(b.dependency("zig-wasm-ffi", .{}).path(glue.js_file).getPath(b), b.fmt("dist/{s}.js", .{glue.name}));
-               }
-           }
-       }
-       b.installFile("src/index.html", "dist/index.html");
-
-       // Generate main.js
-       const gen_step = b.addWriteFiles();
-       var imports = std.ArrayList(u8).init(b.allocator);
-       defer imports.deinit();
-       var env = std.ArrayList(u8).init(b.allocator);
-       defer env.deinit();
-       for (used_apis) |api| {
-           if (std.mem.eql(u8, api, "webaudio")) {
-               try imports.writer().print("import {{ createAudioContext, decodeAudioData }} from './webaudio.js';\n", .{});
-               try env.writer().print("            createAudioContext,\n            decodeAudioData,\n", .{});
-           } else if (std.mem.eql(u8, api, "webinput")) {
-               try imports.writer().print("import {{ getGamepads }} from './webinput.js';\n", .{});
-               try env.writer().print("            getGamepads,\n", .{});
-           }
-       }
-       const main_js = gen_step.add("main.js", try std.fmt.allocPrint(b.allocator,
-           \\{s}
-           \\async function init() {{
-           \\    if (!navigator.gpu) {{
-           \\        console.error('WebGPU not supported');
-           \\        return;
-           \\    }}
-           \\    const imports = {{
-           \\        env: {{
-           \\{s}        }}
-           \\    }};
-           \\    const {{ instance }} = await WebAssembly.instantiateStreaming(fetch('app.wasm'), imports);
-           \\    instance.exports.main();
-           \\}}
-           \\init().catch(console.error);
-       , .{ imports.items, env.items }));
-       b.installFile(main_js.getOutput(), "dist/main.js");
-   }
-   ```
-
-3. **Write Your Application**:
-   Create `src/main.zig` to use the bindings:
-   ```zig
-   const wasm_ffi = @import("zig-wasm-ffi");
-
-   pub fn main() !void {
-       const ctx = try wasm_ffi.webaudio.createAudioContext();
-       const gamepads = wasm_ffi.webinput.getGamepads();
-       // Use ctx and gamepads
-   }
-   ```
-
-4. **Create `index.html`**:
-   ```html
-   <!DOCTYPE html>
-   <html>
-   <head>
-       <title>Zig WASM App</title>
-   </head>
-   <body>
-       <canvas id="canvas"></canvas>
-       <script type="module" src="main.js"></script>
-   </body>
-   </html>
-   ```
-
-5. **Build and Serve**:
-   ```bash
-   zig build
-   ```
-   - Output in `dist/`:
-     ```
-     dist/
-     ├── app.wasm      # Only webaudio and webinput code
-     ├── main.js       # Imports webaudio.js, webinput.js
-     ├── webaudio.js
-     ├── webinput.js
-     ├── index.html
-     ```
-   - Serve with nginx:
-     ```nginx
-     server {
-         root /path/to/dist;
-         location / {
-             try_files $uri $uri/ /index.html;
-         }
-         location ~ \.(wasm|js)$ {
-             types {
-                 application/wasm wasm;
-                 application/javascript js;
-             }
-             gzip on;
-             gzip_types application/wasm application/javascript text/html;
-         }
-     }
-     ```
-   - Open `http://localhost` in a WebGPU-enabled browser.
-
-### Bundling (Optional)
-For production, bundle JavaScript files into a single `main.js` to reduce HTTP requests:
-```bash
-bun install
-```
-Update `build.zig` to include a Bun or esbuild step for release builds:
-```zig
-if (b.option(bool, "release", "Build for production") orelse false) {
-    const bundle_step = b.addSystemCommand(&[_][]const u8{
-        "bun",
-        "build",
-        "dist/main.js",
-        "dist/webaudio.js",
-        "dist/webinput.js",
-        "--outdir",
-        "dist",
-        "--minify",
-        "--outfile",
-        "main.js",
-    });
-    bundle_step.step.dependOn(b.getInstallStep());
-    b.getInstallStep().dependOn(&bundle_step.step);
-}
-```
-Run `zig build -Drelease` to produce a bundled `dist/main.js`.
 
 ## Building
 
-To build the main WASM library (`zig_wasm_ffi.wasm`):
+Build the WASM library:
 
 ```bash
-zig build wasm -Doptimize=ReleaseSmall # Or ReleaseFast, Debug
+zig build wasm -Doptimize=ReleaseSmall
 ```
 
-This will place the output in `zig-out/bin/zig_wasm_ffi.wasm`.
+Output: `zig-out/bin/zig_wasm_ffi.wasm`
 
-To build the example project:
+Build a demo (e.g., input_n_audio):
 
 ```bash
-cd example
-zig build -Doptimize=ReleaseSmall # Or ReleaseFast, Debug
+cd demos/input_n_audio
+zig build -Doptimize=ReleaseSmall
 ```
 
-This will create `example/zig-out/bin/example.wasm`.
+Serve the output with any static file server to run in the browser.
 
 ## Testing
 
-Unit tests for library modules are typically co-located with the code they test. For example, tests for `src/webinput.zig` are placed in `src/webinput.test.zig`. These are then aggregated by a `test {}` block in `src/lib.zig`.
+Tests are co-located with the code they test (`src/*.test.zig`) and aggregated through `src/lib.zig`.
 
-There are two primary ways to run these tests:
+Using the build system (recommended):
 
-1.  **Using the build system (recommended for CI and general checks):**
-    ```bash
-    zig build test
-    ```
-    This command compiles and executes all tests defined and included by the build process. 
-    *   **Output**: It's typically silent if all tests pass, only producing output if there are failures or compilation errors. This makes it ideal for automated checks (like in Continuous Integration pipelines).
+```bash
+zig build test
+```
 
-2.  **Running tests directly on a source file (good for direct feedback during development):**
-    ```bash
-    zig test src/lib.zig
-    ```
-    This command directly invokes the test runner on `src/lib.zig`, which in turn imports and runs the tests from `src/webinput.test.zig` (and any other `*.test.zig` files you include in `src/lib.zig`'s test block).
-    *   **Output**: It provides more verbose output, explicitly stating the number of tests run and confirming if all passed (e.g., "All 9 tests passed."). This is often preferred during active development for immediate confirmation.
+Running tests directly:
 
-Both methods will execute the same set of tests defined in your `*.test.zig` files and included via `src/lib.zig`.
+```bash
+zig test src/lib.zig
+```
 
 ## Contributing
 
@@ -437,8 +101,6 @@ Contributions are welcome! Please:
 3. Commit changes (`git commit -am 'Add WebRTC binding'`).
 4. Push to the branch (`git push origin feature/new-binding`).
 5. Open a pull request.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ## License
 
@@ -473,7 +135,3 @@ SOFTWARE.
 - **Issues**: Report bugs or request features at [github.com/hotschmoe/zig-wasm-ffi/issues](https://github.com/hotschmoe/zig-wasm-ffi/issues).
 - **Discussion**: Join the Zig community on [Discord](https://ziglang.org/community/) or [Reddit](https://reddit.com/r/zig).
 - **Email**: Contact hotschmoe at [email@example.com](mailto:email@example.com).
-
----
-
-**Build the future of web applications with Zig and `zig-wasm-ffi`!**
