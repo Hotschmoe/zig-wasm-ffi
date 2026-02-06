@@ -1,0 +1,16 @@
+.{
+    .name = .particle_life,
+    .version = "0.0.0",
+    .minimum_zig_version = "0.15.0",
+    .dependencies = .{
+        .@"zig-wasm-ffi" = .{
+            .path = "../../",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src/",
+    },
+    .fingerprint = 0x67da4596a8acaea0,
+}
