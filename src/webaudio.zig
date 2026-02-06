@@ -1,37 +1,16 @@
 // zig-wasm-ffi/src/webaudio.zig
+const builtin = @import("builtin");
 
 // --- Configuration ---
-pub const MAX_DECODE_REQUESTS: usize = 16; // Maximum number of concurrent audio decode requests
+pub const MAX_DECODE_REQUESTS: usize = 16;
 
-// --- Named Enums and Types ---
-pub const AudioContextState = enum {
-    Uninitialized,
-    Ready,
-    Error,
-    NotCreatedYet,
-};
-
-// --- FFI Imports (JavaScript 'env' object) ---
-extern "env" fn env_createAudioContext() u32;
-extern "env" fn env_decodeAudioData(context_id: u32, audio_data_ptr: [*]const u8, audio_data_len: usize, user_request_id: u32) void;
-extern "env" fn env_playDecodedAudio(audio_context_id: u32, js_decoded_buffer_id: u32) void;
-extern "env" fn env_playLoopingTaggedSound(audio_context_id: u32, js_buffer_id: u32, sound_instance_tag: u32) void;
-extern "env" fn env_stopTaggedSound(audio_context_id: u32, sound_instance_tag: u32) void;
-
-// --- State Management ---
+// --- Types ---
+pub const AudioContextState = enum { Uninitialized, Ready, Error, NotCreatedYet };
 
 /// 0 is invalid.
 pub const AudioContextHandle = u32;
 
-var g_audio_context_handle: AudioContextHandle = 0;
-var g_current_audio_context_state: AudioContextState = .Uninitialized;
-
-pub const DecodeStatus = enum {
-    Free,
-    Pending,
-    Success,
-    Error,
-};
+pub const DecodeStatus = enum { Free, Pending, Success, Error };
 
 pub const AudioBufferInfo = struct {
     js_buffer_id: u32,
@@ -47,6 +26,52 @@ pub const DecodeRequestEntry = struct {
     buffer_info: ?AudioBufferInfo = null,
 };
 
+// --- FFI Binding Layer ---
+// WASM builds: direct extern "env" calls (unreferenced in test builds, DCE'd by compiler).
+// Test builds: calls through overridable function pointers.
+
+extern "env" fn env_createAudioContext() u32;
+extern "env" fn env_decodeAudioData(u32, [*]const u8, usize, u32) void;
+extern "env" fn env_playDecodedAudio(u32, u32) void;
+extern "env" fn env_playLoopingTaggedSound(u32, u32, u32) void;
+extern "env" fn env_stopTaggedSound(u32, u32) void;
+
+fn noopCreate() u32 { return 0; }
+fn noopDecode(_: u32, _: [*]const u8, _: usize, _: u32) void {}
+fn noop2(_: u32, _: u32) void {}
+fn noop3(_: u32, _: u32, _: u32) void {}
+
+pub var mock_createAudioContext: *const fn () u32 = &noopCreate;
+pub var mock_decodeAudioData: *const fn (u32, [*]const u8, usize, u32) void = &noopDecode;
+pub var mock_playDecodedAudio: *const fn (u32, u32) void = &noop2;
+pub var mock_playLoopingTaggedSound: *const fn (u32, u32, u32) void = &noop3;
+pub var mock_stopTaggedSound: *const fn (u32, u32) void = &noop2;
+
+inline fn ffiCreateAudioContext() u32 {
+    if (comptime builtin.is_test) return mock_createAudioContext();
+    return env_createAudioContext();
+}
+inline fn ffiDecodeAudioData(ctx: u32, ptr: [*]const u8, len: usize, id: u32) void {
+    if (comptime builtin.is_test) return mock_decodeAudioData(ctx, ptr, len, id);
+    return env_decodeAudioData(ctx, ptr, len, id);
+}
+inline fn ffiPlayDecodedAudio(ctx: u32, buf: u32) void {
+    if (comptime builtin.is_test) return mock_playDecodedAudio(ctx, buf);
+    return env_playDecodedAudio(ctx, buf);
+}
+inline fn ffiPlayLoopingTaggedSound(ctx: u32, buf: u32, tag: u32) void {
+    if (comptime builtin.is_test) return mock_playLoopingTaggedSound(ctx, buf, tag);
+    return env_playLoopingTaggedSound(ctx, buf, tag);
+}
+inline fn ffiStopTaggedSound(ctx: u32, tag: u32) void {
+    if (comptime builtin.is_test) return mock_stopTaggedSound(ctx, tag);
+    return env_stopTaggedSound(ctx, tag);
+}
+
+// --- State ---
+
+var g_audio_context_handle: AudioContextHandle = 0;
+var g_current_audio_context_state: AudioContextState = .Uninitialized;
 pub var g_decode_requests: [MAX_DECODE_REQUESTS]DecodeRequestEntry = undefined;
 
 // --- Internal Helpers ---
@@ -73,7 +98,7 @@ fn isContextValid(ctx_handle: AudioContextHandle) bool {
     return g_current_audio_context_state == .Ready and ctx_handle == g_audio_context_handle and ctx_handle != 0;
 }
 
-// --- Exported Zig functions for JavaScript to call (Async Callbacks) ---
+// --- Exported Zig functions (called by JavaScript for async callbacks) ---
 
 pub export fn zig_internal_on_audio_buffer_decoded(
     user_request_id: u32,
@@ -100,7 +125,7 @@ pub export fn zig_internal_on_decode_error(user_request_id: u32) void {
     g_decode_requests[i].buffer_info = null;
 }
 
-// --- Public API for Zig Application ---
+// --- Public API ---
 
 pub fn init_webaudio_module_state() void {
     g_audio_context_handle = 0;
@@ -117,7 +142,7 @@ pub fn createAudioContext() ?AudioContextHandle {
         return null;
     }
 
-    const ctx_id = env_createAudioContext();
+    const ctx_id = ffiCreateAudioContext();
     if (ctx_id == 0) {
         g_current_audio_context_state = .Error;
         g_audio_context_handle = 0;
@@ -134,13 +159,9 @@ pub fn getAudioContextState() AudioContextState {
     return g_current_audio_context_state;
 }
 
-/// Async: JS will call zig_internal_on_audio_buffer_decoded or zig_internal_on_decode_error on completion.
+/// Async: JS calls zig_internal_on_audio_buffer_decoded or zig_internal_on_decode_error on completion.
 /// user_request_id must be non-zero and unique among pending requests.
-pub fn requestDecodeAudioData(
-    ctx_handle: AudioContextHandle,
-    audio_data: []const u8,
-    user_request_id: u32,
-) bool {
+pub fn requestDecodeAudioData(ctx_handle: AudioContextHandle, audio_data: []const u8, user_request_id: u32) bool {
     if (!isContextValid(ctx_handle)) return false;
     if (user_request_id == 0) return false;
 
@@ -166,7 +187,7 @@ pub fn requestDecodeAudioData(
         .buffer_info = null,
     };
 
-    env_decodeAudioData(ctx_handle, audio_data.ptr, audio_data.len, user_request_id);
+    ffiDecodeAudioData(ctx_handle, audio_data.ptr, audio_data.len, user_request_id);
     return true;
 }
 
@@ -184,20 +205,20 @@ pub fn getDecodedAudioBufferInfo(user_request_id: u32) ?AudioBufferInfo {
 pub fn playDecodedAudio(ctx_handle: AudioContextHandle, js_decoded_buffer_id: u32) void {
     if (!isContextValid(ctx_handle)) return;
     if (js_decoded_buffer_id == 0) return;
-    env_playDecodedAudio(ctx_handle, js_decoded_buffer_id);
+    ffiPlayDecodedAudio(ctx_handle, js_decoded_buffer_id);
 }
 
 /// Replaces any existing sound with the same tag.
 pub fn playLoopingTaggedSound(ctx_handle: AudioContextHandle, js_buffer_id: u32, sound_instance_tag: u32) void {
     if (!isContextValid(ctx_handle)) return;
     if (js_buffer_id == 0 or sound_instance_tag == 0) return;
-    env_playLoopingTaggedSound(ctx_handle, js_buffer_id, sound_instance_tag);
+    ffiPlayLoopingTaggedSound(ctx_handle, js_buffer_id, sound_instance_tag);
 }
 
 pub fn stopTaggedSound(ctx_handle: AudioContextHandle, sound_instance_tag: u32) void {
     if (!isContextValid(ctx_handle)) return;
     if (sound_instance_tag == 0) return;
-    env_stopTaggedSound(ctx_handle, sound_instance_tag);
+    ffiStopTaggedSound(ctx_handle, sound_instance_tag);
 }
 
 /// Frees the slot for reuse by future decode requests.

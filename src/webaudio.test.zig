@@ -2,23 +2,12 @@ const std = @import("std");
 const testing = std.testing;
 const webaudio = @import("webaudio.zig");
 
-// --- Mock JavaScript FFI Implementations & Control Variables ---
+// --- Mock State Variables ---
 
-// Mock for env_createAudioContext
 var mock_create_audio_context_should_succeed: bool = true;
 var mock_created_audio_context_id: webaudio.AudioContextHandle = 1;
 var mock_env_createAudioContext_call_count: u32 = 0;
 
-pub fn env_createAudioContext() u32 {
-    mock_env_createAudioContext_call_count += 1;
-    if (mock_create_audio_context_should_succeed) {
-        return mock_created_audio_context_id;
-    } else {
-        return 0; // 0 indicates failure
-    }
-}
-
-// Mock for env_decodeAudioData
 const MockDecodeParams = struct {
     context_id: u32,
     audio_data_ptr: [*]const u8,
@@ -33,10 +22,20 @@ var mock_decode_audio_data_js_duration_ms: u32 = 3000;
 var mock_decode_audio_data_js_length_samples: u32 = 44100 * 3;
 var mock_decode_audio_data_js_num_channels: u32 = 2;
 var mock_decode_audio_data_js_sample_rate_hz: u32 = 44100;
-
 var mock_decodeAudioData_is_noop: bool = false;
 
-pub fn env_decodeAudioData(
+// --- Mock Implementations ---
+
+fn mockCreateAudioContext() u32 {
+    mock_env_createAudioContext_call_count += 1;
+    if (mock_create_audio_context_should_succeed) {
+        return mock_created_audio_context_id;
+    } else {
+        return 0;
+    }
+}
+
+fn mockDecodeAudioData(
     context_id: u32,
     audio_data_ptr: [*]const u8,
     audio_data_len: usize,
@@ -68,10 +67,6 @@ pub fn env_decodeAudioData(
     }
 }
 
-// For the "duplicate pending request" test
-var duplicate_test_first_call_done: bool = false;
-
-// Helper to reset mock states before each test
 fn reset_mock_states() void {
     mock_create_audio_context_should_succeed = true;
     mock_created_audio_context_id = 1;
@@ -87,7 +82,9 @@ fn reset_mock_states() void {
     mock_decode_audio_data_js_sample_rate_hz = 44100;
     mock_decodeAudioData_is_noop = false;
 
-    duplicate_test_first_call_done = false; // Reset for the specific test
+    // Wire mock implementations into webaudio's function pointers
+    webaudio.mock_createAudioContext = &mockCreateAudioContext;
+    webaudio.mock_decodeAudioData = &mockDecodeAudioData;
 
     webaudio.init_webaudio_module_state();
 }
@@ -196,7 +193,7 @@ test "requestDecodeAudioData no AudioContext" {
     reset_mock_states();
     webaudio.init_webaudio_module_state();
     mock_create_audio_context_should_succeed = false;
-    _ = webaudio.createAudioContext(); // This sets internal state to Error
+    _ = webaudio.createAudioContext();
     try testing.expect(webaudio.getAudioContextState() == .Error);
 
     const sample_data_array = [_]u8{0};
@@ -252,7 +249,7 @@ test "requestDecodeAudioData duplicate pending request" {
     const sample_data_slice = sample_data_array[0..];
     const user_req_id: u32 = 20;
 
-    mock_decodeAudioData_is_noop = true; // Configure mock to not call back, leaving request pending
+    mock_decodeAudioData_is_noop = true;
 
     const requested1 = webaudio.requestDecodeAudioData(ctx_handle, sample_data_slice, user_req_id);
     try testing.expect(requested1);
@@ -261,7 +258,7 @@ test "requestDecodeAudioData duplicate pending request" {
 
     const requested2 = webaudio.requestDecodeAudioData(ctx_handle, sample_data_slice, user_req_id);
     try testing.expect(!requested2);
-    try testing.expect(mock_env_decodeAudioData_call_count == 1); // Not called again as it failed early
+    try testing.expect(mock_env_decodeAudioData_call_count == 1);
 }
 
 test "getDecodeRequestStatus and getDecodedAudioBufferInfo for non-existent request" {

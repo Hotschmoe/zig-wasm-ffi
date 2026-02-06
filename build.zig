@@ -41,4 +41,12 @@ pub fn build(b: *std.Build) void {
     });
     const run_tests = b.addRunArtifact(test_step);
     b.step("test", "Run library tests").dependOn(&run_tests.step);
+
+    // Demo: build and serve (zig build run)
+    const build_demo = b.addSystemCommand(&.{ "sh", "-c", "cd demos/input_n_audio && zig build deploy" });
+
+    const serve_demo = b.addSystemCommand(&.{ "python3", "-m", "http.server", "-d", "demos/input_n_audio/dist" });
+    serve_demo.step.dependOn(&build_demo.step);
+
+    b.step("run", "Build demos and start local server").dependOn(&serve_demo.step);
 }

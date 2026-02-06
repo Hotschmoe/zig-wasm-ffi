@@ -5,6 +5,5 @@ pub const webinput = @import("webinput.zig");
 
 test {
     _ = @import("webinput.test.zig");
-    // webaudio tests require extern "env" FFI mocks; run directly: zig test src/webaudio.test.zig -fPIC
-    // _ = @import("webaudio.test.zig");
+    _ = @import("webaudio.test.zig");
 }

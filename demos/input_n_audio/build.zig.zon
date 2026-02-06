@@ -1,7 +1,7 @@
 .{
     .name = .zig_ffi_example,
     .version = "0.0.0",
-    .minimum_zig_version = "0.14.0",
+    .minimum_zig_version = "0.15.0",
     .dependencies = .{
         .@"zig-wasm-ffi" = .{
             .path = "../../",

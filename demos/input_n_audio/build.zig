@@ -2,7 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 // This is the build script for our generic WebAssembly project
-pub fn build(b: *std.Build) !void {
+pub fn build(b: *std.Build) void {
     // Standard target options for WebAssembly
     const wasm_target = std.Target.Query{
         .cpu_arch = .wasm32,
@@ -21,9 +21,11 @@ pub fn build(b: *std.Build) !void {
     // Create an executable that compiles to WebAssembly
     const exe = b.addExecutable(.{
         .name = "zig-ffi-example",
-        .root_source_file = b.path("src/main.zig"),
-        .target = b.resolveTargetQuery(wasm_target),
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = b.resolveTargetQuery(wasm_target),
+            .optimize = optimize,
+        }),
     });
 
     // Add zig-webaudio-direct module
@@ -72,49 +74,24 @@ pub fn build(b: *std.Build) !void {
         // "webgpu", // Uncomment if using WebGPU API from zig-wasm-ffi
     };
 
-    var all_copy_js_glue_steps = std.ArrayList(*std.Build.Step).init(b.allocator);
-    defer all_copy_js_glue_steps.deinit();
-
-    for (used_web_apis) |api_name| {
-        const js_source_filename_in_dep = b.fmt("src/js/{s}.js", .{api_name});
-        const source_lazy_path = zig_wasm_ffi_dep.path(js_source_filename_in_dep);
-
-        const dest_sub_path = b.fmt("../dist/{s}.js", .{api_name});
-        const install_js_glue_step = b.addInstallFile(source_lazy_path, dest_sub_path);
-        install_js_glue_step.step.dependOn(&make_dist.step);
-        try all_copy_js_glue_steps.append(&install_js_glue_step.step);
-    }
-
-    // --- STRETCH GOAL COMMENT for dynamic main.js ---
-    // TODO: Dynamically generate `main.js` in the `dist` directory.
-    // This generated `main.js` would:
-    // 1. Import only the JavaScript modules for the APIs listed in `used_web_apis`
-    //    (e.g., `import { someFunction } from './webaudio.js';`).
-    // 2. Construct the `importsObject.env` with only the functions from these imported modules.
-    // 3. Instantiate `app.wasm` with this tailored `importsObject`.
-    // This would replace a static `web/main.js`.
-    // See README.md for an example of how this might be implemented with `b.addWriteFiles()`.
-
     // --- Run and Deploy Steps ---
-    const cmd_args = if (builtin.os.tag == .windows)
-        &[_][]const u8{ "cmd", "/c", "cd", "dist", "&&", "python", "-m", "http.server" }
-    else
-        &[_][]const u8{ "cd", "dist", "&&", "python", "-m", "http.server" };
-
-    const run_cmd = b.addSystemCommand(cmd_args);
+    const run_cmd = b.addSystemCommand(&.{ "python3", "-m", "http.server", "-d", "dist" });
     run_cmd.step.dependOn(&copy_wasm.step);
-    run_cmd.step.dependOn(&copy_web_assets.step); // For index.html, static main.js, etc.
-    for (all_copy_js_glue_steps.items) |js_copy_step| {
-        run_cmd.step.dependOn(js_copy_step);
-    }
-
-    const run_step = b.step("run", "Build, deploy, and start Python HTTP server");
-    run_step.dependOn(&run_cmd.step);
+    run_cmd.step.dependOn(&copy_web_assets.step);
 
     const deploy_step = b.step("deploy", "Build and copy files to dist directory");
     deploy_step.dependOn(&copy_wasm.step);
     deploy_step.dependOn(&copy_web_assets.step);
-    for (all_copy_js_glue_steps.items) |js_copy_step| {
-        deploy_step.dependOn(js_copy_step);
+
+    // Copy JS glue files from zig-wasm-ffi dependency into dist/
+    for (used_web_apis) |api_name| {
+        const source_path = zig_wasm_ffi_dep.path(b.fmt("src/js/{s}.js", .{api_name}));
+        const install_step = b.addInstallFile(source_path, b.fmt("../dist/{s}.js", .{api_name}));
+        install_step.step.dependOn(&make_dist.step);
+        run_cmd.step.dependOn(&install_step.step);
+        deploy_step.dependOn(&install_step.step);
     }
+
+    const run_step = b.step("run", "Build, deploy, and start Python HTTP server");
+    run_step.dependOn(&run_cmd.step);
 }
